@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-translator"
+version = "0.1.0"
+description = "End-to-end video translation and Chinese dubbing pipeline."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "video-translator contributors" }]
+dependencies = [
+  "edge-tts>=7.2,<8",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+  "yt-dlp[default,deno]>=2026.6.9",
+]
+
+[project.optional-dependencies]
+asr = ["faster-whisper>=1.2,<2"]
+media = ["static-ffmpeg>=3,<4"]
+separation = ["demucs>=4,<5"]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+]
+all = [
+  "faster-whisper>=1.2,<2",
+  "static-ffmpeg>=3,<4",
+]
+
+[project.scripts]
+video-translator = "video_translator.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_translator"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/video_translator/web" = "video_translator/web"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["video_translator"]
+branch = true

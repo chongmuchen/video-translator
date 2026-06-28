@@ -1,0 +1,15 @@
+.DS_Store
+.idea/
+.env
+.pytest_cache/
+.coverage
+.venv/
+__pycache__/
+*.py[cod]
+data/jobs/*
+!data/jobs/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+.runtime/
+separated/
+work/
