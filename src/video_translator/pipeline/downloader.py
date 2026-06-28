@@ -22,6 +22,30 @@ class DownloadResult:
     metadata: dict
 
 
+def explain_download_error(error: Exception, *, is_bilibili: bool) -> str:
+    message = str(error)
+    if "UNEXPECTED_EOF_WHILE_READING" in message:
+        return (
+            "媒体传输时 TLS 连接被提前断开。程序已启用 curl、分块和重试；"
+            "若仍失败，请用 --proxy direct 绕过系统代理，或检查代理软件的"
+            " B站分流规则。原始错误："
+            f"{message}"
+        )
+    if is_bilibili and ("HTTP Error 412" in message or "Precondition Failed" in message):
+        return (
+            "B站拒绝了未通过风控校验的元数据请求（HTTP 412）。"
+            "请稍后重试，并使用 --cookies-from-browser chrome；"
+            "若当前开启全局代理，再尝试 --proxy direct。原始错误："
+            f"{message}"
+        )
+    if "HTTP Error 403" in message:
+        return (
+            "站点拒绝访问（HTTP 403）。请确认视频权限并提供有效 Cookies。"
+            f"原始错误：{message}"
+        )
+    return f"下载失败：{message}"
+
+
 def validate_remote_url(url: str, settings: Settings) -> str:
     parsed = urlparse(url.strip())
     if parsed.scheme not in {"http", "https"}:
@@ -83,6 +107,12 @@ def acquire_source(
             return _copy_local_file(possible_file, job_dir)
 
     url = validate_remote_url(source, settings)
+    host = (urlparse(url).hostname or "").lower()
+    is_bilibili = host in {
+        "bilibili.com",
+        "www.bilibili.com",
+        "b23.tv",
+    }
     try:
         import yt_dlp
     except ImportError as exc:
@@ -103,6 +133,12 @@ def acquire_source(
         "ffmpeg_location": media.directory,
         "continuedl": True,
         "overwrites": False,
+        "retries": max(0, settings.download_retries),
+        "fragment_retries": max(0, settings.download_fragment_retries),
+        "file_access_retries": 3,
+        "extractor_retries": 3,
+        "socket_timeout": settings.download_socket_timeout,
+        "http_chunk_size": settings.download_http_chunk_size,
     }
     venv_deno = Path(sys.prefix) / "bin" / "deno"
     if venv_deno.is_file():
@@ -111,6 +147,45 @@ def acquire_source(
         options["cookiesfrombrowser"] = (settings.cookies_from_browser,)
     if settings.cookie_file:
         options["cookiefile"] = str(settings.cookie_file.expanduser())
+    if settings.download_proxy is not None:
+        options["proxy"] = settings.download_proxy
+    if settings.download_impersonate:
+        try:
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+
+            options["impersonate"] = ImpersonateTarget.from_str(
+                settings.download_impersonate
+            )
+        except (ImportError, ValueError) as exc:
+            raise PipelineError(
+                f"无效的浏览器模拟目标：{settings.download_impersonate}"
+            ) from exc
+
+    curl_path = shutil.which("curl")
+    if settings.download_backend == "curl" and not curl_path:
+        raise PipelineError("指定了 curl 下载后端，但系统中没有找到 curl。")
+    use_curl = (
+        settings.download_backend == "curl"
+        or (
+            settings.download_backend == "auto"
+            and is_bilibili
+            and curl_path is not None
+        )
+    )
+    if use_curl and curl_path:
+        options["external_downloader"] = {"default": curl_path}
+        options["external_downloader_args"] = {
+            "curl": [
+                "--retry-all-errors",
+                "--retry-delay",
+                "2",
+                "--connect-timeout",
+                "20",
+            ]
+        }
+        logger.info("B站媒体下载后端: curl（带断点续传和重试）")
+    else:
+        logger.info("媒体下载后端: yt-dlp native（带分块和重试）")
 
     logger.info("读取视频信息: %s", url)
     try:
@@ -129,7 +204,9 @@ def acquire_source(
     except InvalidSourceError:
         raise
     except Exception as exc:
-        raise PipelineError(f"下载失败：{exc}") from exc
+        raise PipelineError(
+            explain_download_error(exc, is_bilibili=is_bilibili)
+        ) from exc
 
     candidates = sorted(
         path

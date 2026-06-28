@@ -7,6 +7,7 @@ from video_translator.models import JobStatus, PipelineOptions, Segment
 from video_translator.pipeline import runner
 from video_translator.pipeline.media import probe_media
 from video_translator.pipeline.runner import VideoTranslationPipeline
+from video_translator.pipeline.stepwise import STEP_ORDER
 from video_translator.runtime import resolve_media_binaries
 from video_translator.settings import Settings
 from video_translator.store import JobStore
@@ -104,9 +105,9 @@ def test_end_to_end_runner_with_fake_model_adapters(
     completed = VideoTranslationPipeline(settings, store).run(manifest)
 
     assert completed.status == JobStatus.completed
+    assert completed.completed_steps == [step.value for step in STEP_ORDER]
     output = Path(completed.output_path or "")
     assert output.is_file()
     streams = probe_media(output, media)["streams"]
     assert sum(stream["codec_type"] == "audio" for stream in streams) == 2
     assert sum(stream["codec_type"] == "subtitle" for stream in streams) == 1
-

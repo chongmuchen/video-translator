@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     ffprobe_bin: str | None = None
     cookies_from_browser: str | None = None
     cookie_file: Path | None = None
+    download_backend: Literal["auto", "native", "curl"] = "auto"
+    download_proxy: str | None = None
+    download_impersonate: str | None = None
+    download_retries: int = 10
+    download_fragment_retries: int = 10
+    download_socket_timeout: float = 30
+    download_http_chunk_size: int = 10 * 1024 * 1024
 
     asr_model: str = "large-v3"
     asr_device: str = "auto"

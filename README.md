@@ -18,6 +18,70 @@ YouTube / Bilibili / 本地视频
 本文既是使用说明，也是当前开发进度和逐步验收手册。测试时不要一上来就跑
 两小时视频；先按本文顺序，用 5～15 秒样例逐层确认。
 
+## 推荐入口：分步执行
+
+根目录的 `main.py` 是推荐测试入口，它把每个阶段包成独立 Python 命令：
+
+```bash
+cd /Users/m/workspace/video-translator
+
+# 查看全部流程及尚未完成的 TODO
+.venv/bin/python main.py plan
+
+# 一次只下载一个或多个视频
+.venv/bin/python main.py download \
+  "BILIBILI_URL_1" \
+  "BILIBILI_URL_2" \
+  "YOUTUBE_URL"
+```
+
+每个视频会返回独立任务 ID。然后一次只执行下一步：
+
+```bash
+.venv/bin/python main.py next JOB_ID
+```
+
+反复执行 `next`，流程会依次推进：
+
+```text
+download → extract → transcribe → translate → synthesize → align → mux
+```
+
+也可以明确指定一个步骤：
+
+```bash
+.venv/bin/python main.py step JOB_ID transcribe
+```
+
+查看状态：
+
+```bash
+.venv/bin/python main.py status JOB_ID
+```
+
+从断点连续执行剩余流程：
+
+```bash
+.venv/bin/python main.py resume JOB_ID
+```
+
+新建任务并一口气执行全部流程：
+
+```bash
+.venv/bin/python main.py run "VIDEO_URL"
+```
+
+若要使用 URL 文件批量测试：
+
+```bash
+cp test-videos.example.txt test-videos.txt
+# 编辑 test-videos.txt，填入两个 B站和一个 YouTube 授权视频
+.venv/bin/python main.py download --file test-videos.txt
+```
+
+`test-videos.txt` 已加入 `.gitignore`，不会误提交测试链接。未完成事项同时记录
+在 `TODO.md`，并可通过 `main.py plan` 查看。
+
 ## 1. 当前开发进度
 
 状态说明：
@@ -40,14 +104,14 @@ YouTube / Bilibili / 本地视频
 | 原声自动压低 | ✅ | FFmpeg sidechain compression + `amix` + `loudnorm` | 真实 FFmpeg 集成测试 | 不同节目类型的参数调优 |
 | 人声/BGM 分离 | 🟡 | 可选 Demucs `no_vocals` | 调用代码已实现 | 依赖未默认安装，尚未做模型验收 |
 | 字幕与双音轨 MP4 | ✅ | 中文软字幕、中文配音默认音轨、可选原声音轨 | 自动检查 1 视频 + 2 音频 + 1 字幕流 | 更多播放器兼容性 |
-| CLI | ✅ | `doctor`、`bootstrap-media`、`translate`、`serve` | 冒烟测试 | 更细粒度的单阶段 CLI |
+| CLI | ✅ | 原 CLI 加根目录 `main.py`：批量下载、分步执行、状态、断点恢复、完整运行 | 冒烟测试及本地 download→extract 验证 | 更完善的交互式界面 |
 | Web/API | 🟡 | 创建任务、状态、日志、下载、简易页面 | 健康检查、首页和非法 URL 拒绝已人工冒烟 | API 自动化测试和任务取消 |
 | 任务状态与日志 | ✅ | 单机 JSON manifest、每任务日志和中间文件 | JobStore 单元测试 | 数据库、恢复和分布式队列 |
 | 多说话人/多音色 | ⬜ | 尚未实现 | — | diarization、说话人到音色映射 |
 | 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
 | 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
 
-当前自动化测试基线：**19 项测试通过**。
+当前自动化测试基线：**23 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -75,11 +139,17 @@ data/
 ```text
 queued
 → downloading
+→ downloaded
 → extracting
+→ extracted
 → transcribing
+→ transcribed
 → translating
+→ translated
 → synthesizing
+→ synthesized
 → aligning
+→ aligned
 → muxing
 → completed / failed
 ```
@@ -173,6 +243,7 @@ bootstrap 会：
 .venv/bin/pytest \
   tests/test_media.py \
   tests/test_store.py \
+  tests/test_stepwise.py \
   -v
 ```
 
@@ -182,6 +253,7 @@ bootstrap 会：
 - `atempo` 链；
 - 静音填充和总时长；
 - manifest 的原子写入和状态恢复。
+- 分步执行顺序和强制重跑后的下游失效。
 
 ### 4.5 真实 FFmpeg 封装
 
@@ -229,7 +301,7 @@ bootstrap 会：
 当前预期：
 
 ```text
-19 passed
+23 passed
 ```
 
 ## 5. 第三步：验证真实中文 TTS
@@ -553,7 +625,91 @@ curl http://127.0.0.1:8000/api/jobs \
 
 只使用你拥有版权、取得授权或依法允许处理的视频。
 
-先只读取元数据，不下载：
+推荐先用 Python 包装入口下载三个测试视频：
+
+```bash
+cp test-videos.example.txt test-videos.txt
+# 将占位符替换成两个 B站 URL 和一个 YouTube URL
+
+.venv/bin/python main.py download \
+  --file test-videos.txt \
+  --cookies-from-browser chrome
+```
+
+公开视频不需要 Cookies，可以去掉 `--cookies-from-browser`。
+
+每个成功结果应显示：
+
+```text
+状态:       downloaded
+已完成步骤: download
+下一步:     extract
+视频:       .../data/jobs/{job_id}/source.mp4
+```
+
+逐个检查：
+
+```bash
+.venv/bin/python main.py status JOB_ID
+```
+
+确认下载没问题后，只提取音频：
+
+```bash
+.venv/bin/python main.py next JOB_ID
+```
+
+预期状态变为 `extracted`，并生成 `speech-16k.wav`。
+
+如果日志出现：
+
+```text
+SSL: UNEXPECTED_EOF_WHILE_READING
+```
+
+说明 B站媒体 CDN 的 TLS 连接被代理或网络设备提前断开。项目的 `auto` 模式
+现在会为 B站媒体自动使用系统 curl，并启用断点续传、10 次重试和 10 MB
+分块。对已有失败任务重试：
+
+```bash
+.venv/bin/python main.py step JOB_ID download \
+  --force \
+  --download-backend curl
+```
+
+如果出现 `HTTP Error 412: Precondition Failed`，这是 B站风控拒绝元数据请求。
+稍后重试，并提供浏览器登录态：
+
+```bash
+.venv/bin/python main.py step JOB_ID download \
+  --force \
+  --download-backend curl \
+  --cookies-from-browser chrome \
+  --impersonate chrome
+```
+
+若 Chrome Cookies 解密在 macOS 上卡住，完全退出 Chrome 后重试，或者导出
+Netscape 格式的 `cookies.txt`：
+
+```bash
+.venv/bin/python main.py step JOB_ID download \
+  --force \
+  --download-backend curl \
+  --cookie-file /absolute/path/to/cookies.txt \
+  --impersonate chrome
+```
+
+当前 macOS 开启全局代理、B站媒体仍发生 TLS 错误时，可仅为这次任务直连：
+
+```bash
+.venv/bin/python main.py step JOB_ID download \
+  --force \
+  --download-backend curl \
+  --proxy direct \
+  --cookie-file /absolute/path/to/cookies.txt
+```
+
+以下原始 `yt-dlp` 命令仅用于下载器故障排查。先只读取元数据，不下载：
 
 ```bash
 .venv/bin/yt-dlp \
@@ -584,8 +740,7 @@ VT_COOKIE_FILE=/absolute/path/to/cookies.txt
 然后运行完整流程：
 
 ```bash
-.venv/bin/video-translator translate \
-  "AUTHORIZED_VIDEO_URL"
+.venv/bin/python main.py resume JOB_ID
 ```
 
 先测试 1 分钟以内的视频。确认本地流程稳定后再逐步增加到 5、15、30 分钟。
@@ -696,7 +851,8 @@ Demucs 首次运行会下载模型，CPU 处理很慢，因此它不是 MVP 默�
 |---|---|---|
 | `doctor` 只有翻译服务失败 | Ollama/兼容服务是否启动 | 启动服务，检查 base URL 和模型名 |
 | YouTube 无法解析 | Deno、yt-dlp 版本、Cookies | 运行 `doctor`，再执行 metadata simulate |
-| B站登录内容失败 | Cookies | 配置浏览器 Cookies 或 Cookies 文件 |
+| B站出现 412 | 风控、代理、Cookies | 稍后重试；使用 Cookies 和 `--impersonate chrome` |
+| B站出现 SSL EOF | 系统代理或 CDN TLS | 使用 curl 后端；必要时 `--proxy direct` |
 | Whisper 首次很慢 | 模型正在下载或 CPU 推理 | 先用 `tiny`，确认后再升级模型 |
 | 没有识别结果 | `speech-16k.wav` | 播放该文件，确认有人声且语言设置正确 |
 | 翻译丢句 | `segments.json`、翻译响应 | 程序会因缺失 ID 失败；查看 `pipeline.log` |

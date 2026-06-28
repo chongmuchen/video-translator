@@ -18,7 +18,7 @@ dependencies = [
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
   "uvicorn[standard]>=0.35,<1",
-  "yt-dlp[default,deno]>=2026.6.9",
+  "yt-dlp[curl-cffi,default,deno]>=2026.6.9",
 ]
 
 [project.optional-dependencies]

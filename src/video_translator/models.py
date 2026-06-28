@@ -17,11 +17,17 @@ def utc_now() -> datetime:
 class JobStatus(str, Enum):
     queued = "queued"
     downloading = "downloading"
+    downloaded = "downloaded"
     extracting = "extracting"
+    extracted = "extracted"
     transcribing = "transcribing"
+    transcribed = "transcribed"
     translating = "translating"
+    translated = "translated"
     synthesizing = "synthesizing"
+    synthesized = "synthesized"
     aligning = "aligning"
+    aligned = "aligned"
     muxing = "muxing"
     completed = "completed"
     failed = "failed"
@@ -78,6 +84,7 @@ class JobManifest(BaseModel):
     segments_path: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    completed_steps: list[str] = Field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         data = self.model_dump(mode="json")
@@ -95,4 +102,3 @@ class JobManifest(BaseModel):
             and Path(self.output_path).is_file()
         )
         return data
-

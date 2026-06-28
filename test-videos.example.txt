@@ -1,0 +1,15 @@
+# 每行一个你有权下载和处理的视频 URL。
+# 复制为 test-videos.txt 后，替换下面占位符：
+#
+# cp test-videos.example.txt test-videos.txt
+#
+# B站视频 1
+# https://www.bilibili.com/video/BV_REPLACE_ME_1
+https://www.bilibili.com/video/BV1eDEazVErL
+
+# B站视频 2
+# https://www.bilibili.com/video/BV_REPLACE_ME_2
+
+# YouTube 视频
+# https://www.youtube.com/watch?v=REPLACE_ME
+
