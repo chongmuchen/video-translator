@@ -111,7 +111,7 @@ cp test-videos.example.txt test-videos.txt
 | 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
 | 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
 
-当前自动化测试基线：**23 项测试通过**。
+当前自动化测试基线：**31 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -130,6 +130,8 @@ data/
 │   ├── aligned/            # 已适配时间槽的逐句配音
 │   ├── dub-timeline.wav    # 完整中文配音时间轴
 │   └── separated/          # 启用 Demucs 后的人声分离结果
+├── collections/
+│   └── {collection_id}.json  # 合集分集与独立任务 ID 对照
 └── outputs/
     └── {title}-{job_id}.mp4
 ```
@@ -301,7 +303,7 @@ bootstrap 会：
 当前预期：
 
 ```text
-23 passed
+31 passed
 ```
 
 ## 5. 第三步：验证真实中文 TTS
@@ -744,6 +746,72 @@ VT_COOKIE_FILE=/absolute/path/to/cookies.txt
 ```
 
 先测试 1 分钟以内的视频。确认本地流程稳定后再逐步增加到 5、15、30 分钟。
+
+### B站分P/合集下载
+
+合集使用“一个分 P = 一个独立任务”，避免 68 集共用一个巨大任务。即使传入
+带 `?p=68` 的 URL，合集脚本也会先读取完整目录。
+
+只列出分集，不下载：
+
+```bash
+.venv/bin/python scripts/download_collection.py \
+  "https://www.bilibili.com/video/BV1pG6xBrEct/?p=68" \
+  --list-only
+```
+
+该示例已真实验证能读取 68 个分 P。
+
+下载第 68 集：
+
+```bash
+.venv/bin/python scripts/download_collection.py \
+  "https://www.bilibili.com/video/BV1pG6xBrEct/" \
+  --parts 68
+```
+
+下载第 1～3 集和第 68 集：
+
+```bash
+.venv/bin/python scripts/download_collection.py \
+  "https://www.bilibili.com/video/BV1pG6xBrEct/" \
+  --parts 1-3,68 \
+  --sleep-between 2
+```
+
+明确下载全集：
+
+```bash
+.venv/bin/python scripts/download_collection.py \
+  "https://www.bilibili.com/video/BV1pG6xBrEct/" \
+  --all \
+  --sleep-between 2
+```
+
+仅仅省略 `p` 不会立即下载全集。没有 `--all` 或 `--parts` 时，脚本只预览
+目录，防止误下载几十集。
+
+也可以通过根入口执行同一功能：
+
+```bash
+.venv/bin/python main.py download-collection \
+  "BILIBILI_COLLECTION_URL" \
+  --parts 1-3,68
+```
+
+登录内容追加：
+
+```bash
+--cookies-from-browser chrome --impersonate chrome
+```
+
+下载完成后，`data/collections/{collection_id}.json` 会记录每个分 P 对应的
+任务 ID。每一集后续仍独立推进：
+
+```bash
+.venv/bin/python main.py next JOB_ID
+.venv/bin/python main.py resume JOB_ID
+```
 
 ## 11. 第九步：可选验证 CosyVoice
 

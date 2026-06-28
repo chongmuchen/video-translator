@@ -10,6 +10,8 @@ data/jobs/*
 !data/jobs/.gitkeep
 data/outputs/*
 !data/outputs/.gitkeep
+data/collections/*
+!data/collections/.gitkeep
 .runtime/
 separated/
 work/

@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+import uuid
 from pathlib import Path
 
 
@@ -27,6 +29,10 @@ if sys.version_info < (3, 10):
 
 try:
     from video_translator.cli import doctor
+    from video_translator.collection import (
+        discover_collection,
+        parse_part_spec,
+    )
     from video_translator.errors import VideoTranslatorError
     from video_translator.models import JobManifest, PipelineOptions
     from video_translator.pipeline.stepwise import (
@@ -166,6 +172,116 @@ def command_download(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def command_download_collection(args: argparse.Namespace) -> int:
+    if args.all and args.parts:
+        raise ValueError("--all 和 --parts 不能同时使用。")
+    settings = configured_settings(args)
+    store = JobStore(settings)
+    pipeline = StepwiseVideoTranslationPipeline(settings, store)
+    options = pipeline_options(args)
+
+    print(f"读取合集：{args.url}")
+    collection = discover_collection(args.url, settings)
+    print(f"\n合集：{collection.title}")
+    print(f"分集：{collection.total}\n")
+    for entry in collection.entries:
+        print(f"  P{entry.index:03d}  {entry.title}  {entry.url}")
+
+    if args.list_only or (not args.all and not args.parts):
+        if not args.list_only:
+            print(
+                "\n当前只预览，没有下载。下载全集请加 --all；"
+                "下载部分请加 --parts 1-3,68。"
+            )
+        return 0
+
+    indexes = (
+        [entry.index for entry in collection.entries]
+        if args.all
+        else parse_part_spec(args.parts, collection.total)
+    )
+    if len(indexes) > args.max_items:
+        raise ValueError(
+            f"本次选择 {len(indexes)} 集，超过安全上限 {args.max_items}。"
+            "请缩小 --parts，或显式提高 --max-items。"
+        )
+    selected = [
+        entry for entry in collection.entries if entry.index in set(indexes)
+    ]
+    if not selected:
+        raise ValueError("没有匹配到要下载的分集。")
+
+    collection_id = uuid.uuid4().hex
+    summaries: list[dict] = []
+    failures = 0
+    for position, entry in enumerate(selected, start=1):
+        manifest = store.create(entry.url, options)
+        manifest.metadata["collection"] = {
+            "id": collection_id,
+            "source_url": collection.source_url,
+            "title": collection.title,
+            "part": entry.index,
+            "total": collection.total,
+        }
+        store.save(manifest)
+        print(
+            f"\n[{position}/{len(selected)}] "
+            f"下载 P{entry.index:03d}: {entry.title}"
+        )
+        print(f"任务 ID：{manifest.id}")
+        try:
+            pipeline.run_step(manifest, PipelineStep.download)
+        except Exception as exc:
+            failures += 1
+            latest = store.get(manifest.id)
+            print(f"下载失败：{exc}", file=sys.stderr)
+            summaries.append(
+                {
+                    "part": entry.index,
+                    "url": entry.url,
+                    "job_id": manifest.id,
+                    "status": latest.status.value,
+                    "error": latest.error,
+                }
+            )
+        else:
+            latest = store.get(manifest.id)
+            summaries.append(
+                {
+                    "part": entry.index,
+                    "url": entry.url,
+                    "job_id": manifest.id,
+                    "status": latest.status.value,
+                    "source_path": latest.source_path,
+                }
+            )
+            print_job(latest, pipeline)
+        if position < len(selected) and args.sleep_between > 0:
+            time.sleep(args.sleep_between)
+
+    summary_dir = settings.data_dir / "collections"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = summary_dir / f"{collection_id}.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "id": collection_id,
+                "source_url": collection.source_url,
+                "title": collection.title,
+                "total": collection.total,
+                "selected_parts": indexes,
+                "jobs": summaries,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(f"\n合集任务清单：{summary_path}")
+    print(f"成功 {len(selected) - failures}，失败 {failures}")
+    return 1 if failures else 0
+
+
 def command_run(args: argparse.Namespace) -> int:
     settings = configured_settings(args)
     store = JobStore(settings)
@@ -271,6 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
             "示例：\n"
             "  .venv/bin/python main.py plan\n"
             "  .venv/bin/python main.py download URL1 URL2\n"
+            "  .venv/bin/python main.py download-collection URL --parts 1-3,68\n"
             "  .venv/bin/python main.py next JOB_ID\n"
             "  .venv/bin/python main.py step JOB_ID transcribe\n"
             "  .venv/bin/python main.py resume JOB_ID\n"
@@ -291,6 +408,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="每行一个 URL 的 UTF-8 文本文件，# 开头为注释",
     )
     add_pipeline_options(download)
+
+    collection = subparsers.add_parser(
+        "download-collection",
+        aliases=["download-series"],
+        help="列出或逐集下载 B站分P/站点播放列表",
+    )
+    collection.add_argument("url", help="合集、分P或播放列表 URL")
+    selection = collection.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--all",
+        action="store_true",
+        help="明确下载整个合集",
+    )
+    selection.add_argument(
+        "--parts",
+        help="下载指定分集，如 1-3,5,68",
+    )
+    collection.add_argument(
+        "--list-only",
+        action="store_true",
+        help="只列出分集，不下载",
+    )
+    collection.add_argument(
+        "--max-items",
+        type=int,
+        default=200,
+        help="单次任务安全上限，默认 200",
+    )
+    collection.add_argument(
+        "--sleep-between",
+        type=float,
+        default=1.0,
+        help="每集之间暂停秒数，默认 1 秒",
+    )
+    add_pipeline_options(collection)
 
     run = subparsers.add_parser("run", help="新建任务并执行完整流程")
     run.add_argument("source", help="URL 或本地视频路径")
@@ -324,6 +476,8 @@ def main() -> None:
             code = doctor(configured_settings(args))
         elif args.command == "download":
             code = command_download(args)
+        elif args.command in {"download-collection", "download-series"}:
+            code = command_download_collection(args)
         elif args.command == "run":
             code = command_run(args)
         elif args.command == "resume":
