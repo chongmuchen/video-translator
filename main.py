@@ -120,7 +120,7 @@ def print_job(manifest: JobManifest, pipeline: StepwiseVideoTranslationPipeline)
     print(f"已完成步骤: {completed}")
     print(f"下一步:     {next_step.value if next_step else '无，任务已完成'}")
     if manifest.source_path:
-        print(f"视频:       {manifest.source_path}")
+        print(f"媒体:       {manifest.source_path}")
     if manifest.audio_path:
         print(f"识别音频:   {manifest.audio_path}")
     if manifest.segments_path:

@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     max_download_height: int = 1080
     allowed_hosts: str = (
         "youtube.com,www.youtube.com,m.youtube.com,youtu.be,"
-        "bilibili.com,www.bilibili.com,b23.tv"
+        "bilibili.com,www.bilibili.com,b23.tv,podcasts.apple.com"
     )
 
     ffmpeg_bin: str | None = None

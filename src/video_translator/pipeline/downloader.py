@@ -8,7 +8,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from ..errors import InvalidSourceError, PipelineError
 from ..runtime import MediaBinaries
@@ -22,8 +22,23 @@ class DownloadResult:
     metadata: dict
 
 
-def explain_download_error(error: Exception, *, is_bilibili: bool) -> str:
+def explain_download_error(
+    error: Exception,
+    *,
+    is_bilibili: bool,
+    is_apple_podcasts: bool = False,
+) -> str:
     message = str(error)
+    if is_apple_podcasts and (
+        "No video formats found" in message
+        or "serialized-server-data" in message
+    ):
+        return (
+            "Apple Podcasts 网页提取失败。请改用 RSS 下载器："
+            "make podcast URL='APPLE_PODCAST_URL' "
+            "PODCAST_ARGS='--latest 1'。原始错误："
+            f"{message}"
+        )
     if "UNEXPECTED_EOF_WHILE_READING" in message:
         return (
             "媒体传输时 TLS 连接被提前断开。程序已启用 curl、分块和重试；"
@@ -68,6 +83,12 @@ def validate_remote_url(url: str, settings: Settings) -> str:
         raise InvalidSourceError(
             f"不支持域名 {host}。允许的域名：{', '.join(sorted(allowed))}"
         )
+    if host == "podcasts.apple.com" and not parse_qs(parsed.query).get("i"):
+        raise InvalidSourceError(
+            "Apple Podcasts 当前只支持单集链接，URL 必须包含 ?i=单集ID。"
+            "请在 Apple Podcasts 中打开具体一集后复制分享链接；"
+            "整档节目批量下载尚未实现。"
+        )
     return url.strip()
 
 
@@ -81,8 +102,18 @@ def _copy_local_file(source: Path, job_dir: Path) -> DownloadResult:
         ".mov",
         ".webm",
         ".m4v",
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".opus",
     }:
-        raise InvalidSourceError("仅支持 mp4、mkv、mov、webm、m4v 文件。")
+        raise InvalidSourceError(
+            "本地媒体仅支持 mp4、mkv、mov、webm、m4v、"
+            "mp3、m4a、aac、wav、flac、ogg、opus。"
+        )
     target = job_dir / f"source{source.suffix.lower()}"
     shutil.copy2(source, target)
     return DownloadResult(
@@ -113,6 +144,7 @@ def acquire_source(
         "www.bilibili.com",
         "b23.tv",
     }
+    is_apple_podcasts = host == "podcasts.apple.com"
     try:
         import yt_dlp
     except ImportError as exc:
@@ -205,7 +237,11 @@ def acquire_source(
         raise
     except Exception as exc:
         raise PipelineError(
-            explain_download_error(exc, is_bilibili=is_bilibili)
+            explain_download_error(
+                exc,
+                is_bilibili=is_bilibili,
+                is_apple_podcasts=is_apple_podcasts,
+            )
         ) from exc
 
     candidates = sorted(

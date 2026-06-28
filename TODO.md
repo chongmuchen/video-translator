@@ -12,6 +12,8 @@
 
 ## P1：质量与可靠性
 
+- [ ] 为 Apple Podcasts/纯音频生成中文混音 + 原声双音轨 M4A。
+- [x] 通过 Apple Podcasts Lookup API + RSS 支持整档节目批量下载。
 - [ ] 翻译过长时自动缩写并重新生成 TTS。
 - [ ] 为下载、翻译、TTS 增加统一重试、指数退避和超时。
 - [ ] 支持只重新翻译或只重新配音选中的片段。
@@ -33,4 +35,3 @@
 ```bash
 .venv/bin/python main.py plan
 ```
-

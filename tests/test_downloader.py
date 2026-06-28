@@ -21,6 +21,10 @@ def settings(tmp_path: Path) -> Settings:
         "https://youtu.be/abc",
         "https://www.bilibili.com/video/BV1st7G6WEYR",
         "https://b23.tv/example",
+        (
+            "https://podcasts.apple.com/us/podcast/example/"
+            "id1531349107?i=1000748574256"
+        ),
     ],
 )
 def test_allowed_video_urls(url: str, tmp_path: Path) -> None:
@@ -35,6 +39,7 @@ def test_allowed_video_urls(url: str, tmp_path: Path) -> None:
         "http://localhost/video",
         "https://example.com/video",
         "https://user:pass@youtube.com/video",
+        "https://podcasts.apple.com/us/podcast/example/id1531349107",
     ],
 )
 def test_rejects_untrusted_urls(url: str, tmp_path: Path) -> None:
@@ -58,3 +63,13 @@ def test_explains_tls_eof() -> None:
     )
     assert "TLS" in message
     assert "--proxy direct" in message
+
+
+def test_explains_apple_podcast_extractor_failure() -> None:
+    message = explain_download_error(
+        RuntimeError("No video formats found"),
+        is_bilibili=False,
+        is_apple_podcasts=True,
+    )
+    assert "make podcast" in message
+    assert "--latest 1" in message

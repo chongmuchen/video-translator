@@ -20,6 +20,7 @@ from .media import (
     extract_original_audio,
     extract_speech_audio,
     has_audio_stream,
+    has_video_stream,
     mux_video,
     normalize_tts_segments,
     probe_duration,
@@ -65,6 +66,7 @@ STEP_DESCRIPTIONS = {
 TODO_ITEMS = [
     ("P0", "用用户授权的 2 个 B站视频和 1 个 YouTube 视频验收下载"),
     ("P0", "接通 Ollama/兼容 LLM，验证真实翻译和术语表"),
+    ("P1", "为 Apple Podcasts/纯音频封装中文混音 + 原声双音轨 M4A"),
     ("P1", "翻译过长时自动缩写并重新生成 TTS，而不是最终裁尾"),
     ("P1", "为下载、翻译和 TTS 增加统一重试、退避和断点恢复"),
     ("P1", "增加说话人分离和多角色音色映射"),
@@ -350,6 +352,9 @@ class StepwiseVideoTranslationPipeline:
         manifest.source_path = str(acquired.path)
         manifest.metadata.update(acquired.metadata)
         manifest.metadata["media_duration"] = duration
+        manifest.metadata["media_kind"] = (
+            "video" if has_video_stream(acquired.path, media) else "audio"
+        )
         self.store.save(manifest)
 
     def _step_extract(
@@ -449,6 +454,12 @@ class StepwiseVideoTranslationPipeline:
     ) -> None:
         media = resolve_media_binaries(self.settings)
         source = self._source_path(manifest)
+        if manifest.metadata.get("media_kind") == "audio":
+            raise PipelineError(
+                "Apple Podcasts/纯音频目前已支持下载、提取、转写、翻译、"
+                "中文 TTS 和对齐，但最终双音轨音频封装尚未实现。"
+                "中文字幕和 dub-timeline.wav 已保留；该能力已加入 TODO。"
+            )
         if not manifest.dub_audio_path or not Path(manifest.dub_audio_path).is_file():
             raise PipelineError("缺少完整配音时间轴，请先执行 align。")
         if not manifest.subtitle_path or not Path(manifest.subtitle_path).is_file():
@@ -503,4 +514,3 @@ class StepwiseVideoTranslationPipeline:
         )
         manifest.output_path = str(output)
         self.store.save(manifest)
-

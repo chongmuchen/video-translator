@@ -10,6 +10,7 @@ URL ?=
 PARTS ?=
 EXTRA ?= --cookies-from-browser chrome --impersonate chrome
 SLEEP_BETWEEN ?= 2
+PODCAST_ARGS ?= --list-only
 
 ifeq ($(strip $(PARTS)),)
 COLLECTION_SELECTION := --all
@@ -17,7 +18,7 @@ else
 COLLECTION_SELECTION := --parts "$(PARTS)"
 endif
 
-.PHONY: help bootstrap doctor test plan run clean list download download-one
+.PHONY: help bootstrap doctor test plan run clean list download download-one podcast
 
 help:
 	@echo "Video Translator"
@@ -35,6 +36,9 @@ help:
 	@echo
 	@echo "单集："
 	@echo "  make download-one URL='https://www.bilibili.com/video/BV.../?p=68'"
+	@echo "  make podcast URL='https://podcasts.apple.com/.../id123'"
+	@echo "  make podcast URL='...' PODCAST_ARGS='--latest 1'"
+	@echo "  make podcast URL='...' PODCAST_ARGS='--episodes 1-3'"
 	@echo
 	@echo "登录内容可追加："
 	@echo "  EXTRA='--cookies-from-browser chrome --impersonate chrome'"
@@ -72,8 +76,11 @@ download-one:
 		(echo "错误：缺少 URL。用法：make download-one URL='https://.../?p=68'" >&2; exit 2)
 	$(PYTHON) main.py download "$(URL)" $(EXTRA)
 
+podcast:
+	@test -n "$(strip $(URL))" || \
+		(echo "错误：缺少 URL。用法：make podcast URL='https://podcasts.apple.com/.../id123'" >&2; exit 2)
+	$(PYTHON) scripts/download_apple_podcast.py "$(URL)" $(PODCAST_ARGS)
+
 clean:
 	rm -rf .pytest_cache .coverage
-
-
 

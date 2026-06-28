@@ -92,8 +92,9 @@ cp test-videos.example.txt test-videos.txt
 
 | 流程 | 状态 | 当前实现 | 已有验证 | 尚需验证 |
 |---|---:|---|---|---|
-| 本地视频输入 | ✅ | CLI 复制本地 MP4/MKV/MOV/WebM/M4V | 端到端集成测试 | 不同编码和超长视频 |
+| 本地媒体输入 | ✅ | CLI 复制常见视频及 MP3/M4A/AAC/WAV/FLAC/OGG/OPUS | 视频端到端及纯音频 download→extract 集成测试 | 不同编码和超长媒体 |
 | YouTube/B站输入 | 🟡 | `yt-dlp`、Deno、Cookies、域名和时长限制 | URL 安全单元测试 | 使用已授权真实链接人工验收 |
+| Apple Podcasts | 🟡 | Apple Lookup API→发布者 RSS；支持列目录、最新 N 集、指定集和全集下载 | 真实节目成功读取 359 集 RSS；本地音频提取测试 | 纯音频最终双音轨 M4A 封装 |
 | 音频提取 | ✅ | FFmpeg 输出 16 kHz 单声道 WAV | 真实 FFmpeg 集成测试 | 无音轨、损坏媒体等异常样本 |
 | 语音识别 | 🟡 | `faster-whisper`、VAD、词级时间戳、片段合并 | 模块测试；本机 tiny 模型真实推理通过 | `large-v3` 质量与长视频性能 |
 | 中文翻译 | 🟡 | OpenAI-compatible 接口，支持 Ollama/LM Studio/云服务、批次上下文和术语表 | JSON 解析、ID 完整性单元测试 | 本机尚未安装 Ollama，未做真实翻译验收 |
@@ -111,7 +112,7 @@ cp test-videos.example.txt test-videos.txt
 | 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
 | 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
 
-当前自动化测试基线：**31 项测试通过**。
+当前自动化测试基线：**39 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -303,7 +304,7 @@ bootstrap 会：
 当前预期：
 
 ```text
-31 passed
+39 passed
 ```
 
 ## 5. 第三步：验证真实中文 TTS
@@ -812,6 +813,78 @@ VT_COOKIE_FILE=/absolute/path/to/cookies.txt
 .venv/bin/python main.py next JOB_ID
 .venv/bin/python main.py resume JOB_ID
 ```
+
+### Apple Podcasts（苹果播客）
+
+Apple Podcasts 网页在部分地区会跳转，直接用 yt-dlp 可能拿不到音频。本项目
+使用 Apple Lookup API 找到发布者 RSS，再下载 RSS 中的原始音频。
+
+只列出节目，不下载：
+
+```bash
+make podcast \
+  URL='https://podcasts.apple.com/us/podcast/the-tim-dillon-show/id1135137367'
+```
+
+该示例已真实验证能读取 359 集节目目录。
+
+下载最新一集：
+
+```bash
+make podcast \
+  URL='https://podcasts.apple.com/us/podcast/the-tim-dillon-show/id1135137367' \
+  PODCAST_ARGS='--latest 1'
+```
+
+按列表序号下载第 1～3 集：
+
+```bash
+make podcast \
+  URL='APPLE_PODCAST_SHOW_URL' \
+  PODCAST_ARGS='--episodes 1-3'
+```
+
+下载 RSS 中全部节目：
+
+```bash
+make podcast \
+  URL='APPLE_PODCAST_SHOW_URL' \
+  PODCAST_ARGS='--all --sleep-between 2'
+```
+
+也可以直接运行：
+
+```bash
+.venv/bin/python scripts/download_apple_podcast.py \
+  'APPLE_PODCAST_SHOW_OR_EPISODE_URL' \
+  --latest 1
+```
+
+文件保存在：
+
+```text
+work/podcasts/{节目名称}/
+├── 001-{节目标题}.mp3
+└── download-summary.json
+```
+
+将下载后的音频送入翻译流水线：
+
+```bash
+.venv/bin/python main.py download \
+  'work/podcasts/{节目名称}/001-{节目标题}.mp3'
+
+.venv/bin/python main.py next JOB_ID
+```
+
+当前纯音频已经支持：
+
+```text
+download → extract → transcribe → translate → synthesize → align
+```
+
+最后的纯音频“双音轨 M4A”封装尚未实现；执行 `mux` 时会给出明确提示。
+中文配音时间轴保存在任务目录的 `dub-timeline.wav`。
 
 ## 11. 第九步：可选验证 CosyVoice
 

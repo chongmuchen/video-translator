@@ -60,6 +60,14 @@ def has_audio_stream(path: Path, media: MediaBinaries) -> bool:
     )
 
 
+def has_video_stream(path: Path, media: MediaBinaries) -> bool:
+    data = probe_media(path, media)
+    return any(
+        stream.get("codec_type") == "video"
+        for stream in data.get("streams", [])
+    )
+
+
 def extract_speech_audio(
     source: Path,
     output: Path,
@@ -448,4 +456,3 @@ def mux_video(
     output.parent.mkdir(parents=True, exist_ok=True)
     run_command(args, logger=logger)
     return output
-
