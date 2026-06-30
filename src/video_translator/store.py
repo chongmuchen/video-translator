@@ -121,9 +121,39 @@ class JobStore:
         if not path.is_file():
             raise FileNotFoundError(job_id)
         with self._lock:
-            return JobManifest.model_validate_json(
+            manifest = JobManifest.model_validate_json(
                 path.read_text(encoding="utf-8")
             )
+            if self._repair_artifact_paths(manifest):
+                self.save(manifest)
+            return manifest
+
+    def _repair_artifact_paths(self, manifest: JobManifest) -> bool:
+        """Repair absolute artifact paths after the project directory moves."""
+
+        changed = False
+        job_dir = self.job_dir(manifest.id)
+        for field in (
+            "source_path",
+            "audio_path",
+            "subtitle_path",
+            "dub_audio_path",
+            "segments_path",
+            "output_path",
+        ):
+            value = getattr(manifest, field)
+            if not value:
+                continue
+            root = (
+                self.settings.outputs_dir
+                if field == "output_path"
+                else job_dir
+            )
+            candidate = root / Path(value).name
+            if Path(value) != candidate and candidate.is_file():
+                setattr(manifest, field, str(candidate))
+                changed = True
+        return changed
 
     def list(self, *, limit: int = 100) -> list[JobManifest]:
         paths = sorted(

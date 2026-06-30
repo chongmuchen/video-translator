@@ -5,22 +5,45 @@ CLI := .venv/bin/video-translator
 #   make list URL='https://www.bilibili.com/video/BV.../'
 #   make download URL='https://www.bilibili.com/video/BV.../'
 #   make download URL='https://www.bilibili.com/video/BV.../' PARTS='1-3,68'
-#   make download URL='...' EXTRA='--cookies-from-browser chrome --impersonate chrome'
+#   make download URL='...' COOKIES_FROM_BROWSER=chrome DOWNLOAD_IMPERSONATE=chrome
 URL ?=
 JOB_ID ?=
 PARTS ?=
-EXTRA ?= --cookies-from-browser chrome --impersonate chrome
+EXTRA ?=
+MAX_DOWNLOAD_HEIGHT ?= 1080
+DOWNLOAD_BACKEND ?= auto
+COOKIES_FROM_BROWSER ?=
+DOWNLOAD_PROXY ?=
+DOWNLOAD_IMPERSONATE ?=
 EXTRACT_ARGS ?=
 TRANSCRIBE_ARGS ?=
+ASR_BACKEND ?= faster_whisper
 ASR_MODEL ?= small
 ASR_DEVICE ?= auto
 ASR_COMPUTE_TYPE ?= auto
 SOURCE_LANGUAGE ?=
 TARGET_LANGUAGE ?= 简体中文
 TRANSLATOR_PROVIDER ?= openai_compatible
-TRANSLATOR_BASE_URL ?= http://127.0.0.1:11434/v1
-TRANSLATOR_MODEL ?= qwen3:8b
+ifeq ($(TRANSLATOR_PROVIDER),kimi)
+TRANSLATOR_DEFAULT_BASE_URL := https://api.moonshot.cn/v1
+TRANSLATOR_DEFAULT_MODEL := kimi-k2.6
+else ifeq ($(TRANSLATOR_PROVIDER),minimax)
+TRANSLATOR_DEFAULT_BASE_URL := https://api.minimaxi.com/v1
+TRANSLATOR_DEFAULT_MODEL := MiniMax-M2.7
+else ifeq ($(TRANSLATOR_PROVIDER),deepseek)
+TRANSLATOR_DEFAULT_BASE_URL := https://api.deepseek.com
+TRANSLATOR_DEFAULT_MODEL := deepseek-v4-flash
+else
+TRANSLATOR_DEFAULT_BASE_URL := http://127.0.0.1:11434/v1
+TRANSLATOR_DEFAULT_MODEL := qwen3:8b
+endif
+TRANSLATOR_BASE_URL ?= $(TRANSLATOR_DEFAULT_BASE_URL)
+TRANSLATOR_MODEL ?= $(TRANSLATOR_DEFAULT_MODEL)
 TRANSLATOR_API_KEY ?=
+TRANSLATOR_TIMEOUT_SECONDS ?= 180
+TRANSLATION_BATCH_SIZE ?= 12
+TRANSLATOR_CODEX_BIN ?= codex
+TRANSLATOR_CODEX_MODEL ?=
 TRANSLATE_ARGS ?=
 GLOSSARY ?=
 TTS_PROVIDER ?= edge
@@ -28,8 +51,10 @@ TTS_VOICE ?= zh-CN-XiaoxiaoNeural
 TTS_RATE ?= +0%
 TTS_VOLUME ?= +0%
 TTS_HTTP_URL ?=
+TTS_HTTP_API_KEY ?=
 COSYVOICE_BASE_URL ?= http://127.0.0.1:50000
 COSYVOICE_MODE ?= sft
+COSYVOICE_SAMPLE_RATE ?= 22050
 SYNTHESIZE_ARGS ?=
 DUB_SAMPLE_RATE ?= 24000
 MAX_TEMPO_FACTOR ?= 1.8
@@ -52,8 +77,15 @@ GLOSSARY_ARG = $(if $(strip $(GLOSSARY)),--glossary "$(GLOSSARY)",)
 KEEP_ORIGINAL_ARG = $(if $(filter true 1 yes,$(KEEP_ORIGINAL_AUDIO)),--keep-original-audio,--no-keep-original-audio)
 DUCK_ORIGINAL_ARG = $(if $(filter true 1 yes,$(DUCK_ORIGINAL_AUDIO)),--duck-original-audio,--no-duck-original-audio)
 BURN_SUBTITLES_ARG = $(if $(filter true 1 yes,$(BURN_SUBTITLES)),--burn-subtitles,--no-burn-subtitles)
+RUN_SOURCE_LANGUAGE_ARG = $(if $(strip $(SOURCE_LANGUAGE)),--source-language "$(SOURCE_LANGUAGE)",)
+RUN_ORIGINAL_ARG = $(if $(filter true 1 yes,$(KEEP_ORIGINAL_AUDIO)),,--no-original-audio)
+RUN_BURN_SUBTITLES_ARG = $(if $(filter true 1 yes,$(BURN_SUBTITLES)),--burn-subtitles,)
+DOWNLOAD_ARGS = --download-backend "$(DOWNLOAD_BACKEND)" \
+	$(if $(strip $(COOKIES_FROM_BROWSER)),--cookies-from-browser "$(COOKIES_FROM_BROWSER)",) \
+	$(if $(strip $(DOWNLOAD_PROXY)),--proxy "$(DOWNLOAD_PROXY)",) \
+	$(if $(strip $(DOWNLOAD_IMPERSONATE)),--impersonate "$(DOWNLOAD_IMPERSONATE)",)
 
-.PHONY: help bootstrap doctor test plan run web clean list download download-one podcast extract transcribe translate synthesize align mux next resume status
+.PHONY: help bootstrap doctor test plan run web auto clean list download download-one podcast extract transcribe translate synthesize align mux next resume status
 
 help:
 	@echo "Video Translator"
@@ -80,11 +112,16 @@ help:
 	@echo "  make extract JOB_ID='任务ID' EXTRACT_ARGS='--force'"
 	@echo
 	@echo "语音识别与时间戳："
-	@echo "  make transcribe JOB_ID='任务ID' ASR_MODEL=small SOURCE_LANGUAGE=en"
+	@echo "  make transcribe JOB_ID='任务ID' ASR_BACKEND=mlx_whisper ASR_MODEL=small.en SOURCE_LANGUAGE=en"
+	@echo "  make transcribe JOB_ID='任务ID' ASR_BACKEND=faster_whisper ASR_MODEL=small SOURCE_LANGUAGE=en"
 	@echo "  make transcribe JOB_ID='任务ID' ASR_MODEL=large-v3 TRANSCRIBE_ARGS='--force'"
 	@echo
 	@echo "后续步骤："
-	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_MODEL='qwen3:8b'"
+	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=codex_cli"
+	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=ollama"
+	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=kimi TRANSLATOR_API_KEY='...'"
+	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=minimax TRANSLATOR_API_KEY='...'"
+	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=deepseek TRANSLATOR_API_KEY='...'"
 	@echo "  make synthesize JOB_ID='任务ID' TTS_PROVIDER=edge"
 	@echo "  make align JOB_ID='任务ID'"
 	@echo "  make mux JOB_ID='任务ID'"
@@ -92,12 +129,15 @@ help:
 	@echo "  make resume JOB_ID='任务ID'"
 	@echo "  make status JOB_ID='任务ID'"
 	@echo
+	@echo "一键按同一套配置跑完 7 步："
+	@echo "  make auto URL='https://...' ASR_BACKEND=mlx_whisper TRANSLATOR_PROVIDER=codex_cli"
+	@echo
 	@echo "本地网页："
 	@echo "  make web"
 	@echo "  浏览器打开 http://127.0.0.1:8000"
 	@echo
 	@echo "登录内容可追加："
-	@echo "  EXTRA='--cookies-from-browser chrome --impersonate chrome'"
+	@echo "  COOKIES_FROM_BROWSER=chrome DOWNLOAD_IMPERSONATE=chrome"
 
 bootstrap:
 	./scripts/bootstrap.sh
@@ -116,23 +156,64 @@ run:
 
 web: run
 
+auto:
+	@test -n "$(strip $(URL))" || \
+		(echo "错误：缺少 URL。用法：make auto URL='https://...'" >&2; exit 2)
+	VT_MAX_DOWNLOAD_HEIGHT="$(MAX_DOWNLOAD_HEIGHT)" \
+	VT_ASR_BACKEND="$(ASR_BACKEND)" \
+	VT_ASR_MODEL="$(ASR_MODEL)" \
+	VT_ASR_DEVICE="$(ASR_DEVICE)" \
+	VT_ASR_COMPUTE_TYPE="$(ASR_COMPUTE_TYPE)" \
+	VT_TRANSLATOR_PROVIDER="$(TRANSLATOR_PROVIDER)" \
+	VT_TRANSLATOR_BASE_URL="$(TRANSLATOR_BASE_URL)" \
+	VT_TRANSLATOR_MODEL="$(TRANSLATOR_MODEL)" \
+	VT_TRANSLATOR_API_KEY="$(TRANSLATOR_API_KEY)" \
+	VT_TRANSLATOR_TIMEOUT_SECONDS="$(TRANSLATOR_TIMEOUT_SECONDS)" \
+	VT_TRANSLATION_BATCH_SIZE="$(TRANSLATION_BATCH_SIZE)" \
+	VT_TRANSLATOR_CODEX_BIN="$(TRANSLATOR_CODEX_BIN)" \
+	VT_TRANSLATOR_CODEX_MODEL="$(TRANSLATOR_CODEX_MODEL)" \
+	VT_TTS_PROVIDER="$(TTS_PROVIDER)" \
+	VT_TTS_VOICE="$(TTS_VOICE)" \
+	VT_TTS_RATE="$(TTS_RATE)" \
+	VT_TTS_VOLUME="$(TTS_VOLUME)" \
+	VT_TTS_HTTP_URL="$(TTS_HTTP_URL)" \
+	VT_TTS_HTTP_API_KEY="$(TTS_HTTP_API_KEY)" \
+	VT_COSYVOICE_BASE_URL="$(COSYVOICE_BASE_URL)" \
+	VT_COSYVOICE_MODE="$(COSYVOICE_MODE)" \
+	VT_COSYVOICE_SAMPLE_RATE="$(COSYVOICE_SAMPLE_RATE)" \
+	VT_DUB_SAMPLE_RATE="$(DUB_SAMPLE_RATE)" \
+	VT_MAX_TEMPO_FACTOR="$(MAX_TEMPO_FACTOR)" \
+	VT_DUCK_ORIGINAL_AUDIO="$(DUCK_ORIGINAL_AUDIO)" \
+	VT_ENABLE_DEMUCS="$(ENABLE_DEMUCS)" \
+	$(PYTHON) main.py run "$(URL)" \
+		--target-language "$(TARGET_LANGUAGE)" \
+		$(RUN_SOURCE_LANGUAGE_ARG) \
+		$(RUN_ORIGINAL_ARG) \
+		$(RUN_BURN_SUBTITLES_ARG) \
+		$(GLOSSARY_ARG) \
+		$(DOWNLOAD_ARGS) $(EXTRA)
+
 list:
 	@test -n "$(strip $(URL))" || \
 		(echo "错误：缺少 URL。用法：make list URL='https://...'" >&2; exit 2)
-	$(PYTHON) scripts/download_collection.py "$(URL)" --list-only $(EXTRA)
+	VT_MAX_DOWNLOAD_HEIGHT="$(MAX_DOWNLOAD_HEIGHT)" \
+	$(PYTHON) scripts/download_collection.py "$(URL)" --list-only \
+		$(DOWNLOAD_ARGS) $(EXTRA)
 
 download:
 	@test -n "$(strip $(URL))" || \
 		(echo "错误：缺少 URL。用法：make download URL='https://...' [PARTS='1-3,68']" >&2; exit 2)
+	VT_MAX_DOWNLOAD_HEIGHT="$(MAX_DOWNLOAD_HEIGHT)" \
 	$(PYTHON) scripts/download_collection.py "$(URL)" \
 		$(COLLECTION_SELECTION) \
 		--sleep-between "$(SLEEP_BETWEEN)" \
-		$(EXTRA)
+		$(DOWNLOAD_ARGS) $(EXTRA)
 
 download-one:
 	@test -n "$(strip $(URL))" || \
 		(echo "错误：缺少 URL。用法：make download-one URL='https://.../?p=68'" >&2; exit 2)
-	$(PYTHON) main.py download "$(URL)" $(EXTRA)
+	VT_MAX_DOWNLOAD_HEIGHT="$(MAX_DOWNLOAD_HEIGHT)" \
+	$(PYTHON) main.py download "$(URL)" $(DOWNLOAD_ARGS) $(EXTRA)
 
 podcast:
 	@test -n "$(strip $(URL))" || \
@@ -147,6 +228,7 @@ extract:
 transcribe:
 	@test -n "$(strip $(JOB_ID))" || \
 		(echo "错误：缺少 JOB_ID。用法：make transcribe JOB_ID='任务ID' [ASR_MODEL=small] [SOURCE_LANGUAGE=en]" >&2; exit 2)
+	VT_ASR_BACKEND="$(ASR_BACKEND)" \
 	VT_ASR_MODEL="$(ASR_MODEL)" \
 	VT_ASR_DEVICE="$(ASR_DEVICE)" \
 	VT_ASR_COMPUTE_TYPE="$(ASR_COMPUTE_TYPE)" \
@@ -160,6 +242,10 @@ translate:
 	VT_TRANSLATOR_BASE_URL="$(TRANSLATOR_BASE_URL)" \
 	VT_TRANSLATOR_MODEL="$(TRANSLATOR_MODEL)" \
 	VT_TRANSLATOR_API_KEY="$(TRANSLATOR_API_KEY)" \
+	VT_TRANSLATOR_TIMEOUT_SECONDS="$(TRANSLATOR_TIMEOUT_SECONDS)" \
+	VT_TRANSLATION_BATCH_SIZE="$(TRANSLATION_BATCH_SIZE)" \
+	VT_TRANSLATOR_CODEX_BIN="$(TRANSLATOR_CODEX_BIN)" \
+	VT_TRANSLATOR_CODEX_MODEL="$(TRANSLATOR_CODEX_MODEL)" \
 	$(PYTHON) main.py step "$(JOB_ID)" translate \
 		--target-language "$(TARGET_LANGUAGE)" \
 		$(GLOSSARY_ARG) $(TRANSLATE_ARGS)
@@ -172,8 +258,10 @@ synthesize:
 	VT_TTS_RATE="$(TTS_RATE)" \
 	VT_TTS_VOLUME="$(TTS_VOLUME)" \
 	VT_TTS_HTTP_URL="$(TTS_HTTP_URL)" \
+	VT_TTS_HTTP_API_KEY="$(TTS_HTTP_API_KEY)" \
 	VT_COSYVOICE_BASE_URL="$(COSYVOICE_BASE_URL)" \
 	VT_COSYVOICE_MODE="$(COSYVOICE_MODE)" \
+	VT_COSYVOICE_SAMPLE_RATE="$(COSYVOICE_SAMPLE_RATE)" \
 	$(PYTHON) main.py step "$(JOB_ID)" synthesize $(SYNTHESIZE_ARGS)
 
 align:

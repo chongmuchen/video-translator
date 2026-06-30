@@ -12,20 +12,24 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from .errors import InvalidSourceError, VideoTranslatorError
 from .manager import JobManager
 from .models import (
+    AutomatedJobCreateRequest,
     JobCreateRequest,
     JobManifest,
     JobStatus,
+    SecretSaveRequest,
     StagedJobCreateRequest,
     StepRunRequest,
 )
 from .pipeline.downloader import validate_remote_url
 from .pipeline.stepwise import PipelineStep, STEP_ORDER
 from .settings import Settings, get_settings
+from .secrets import KeychainSecretStore
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or get_settings()
     manager = JobManager(runtime_settings)
+    secret_store = KeychainSecretStore()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -39,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.manager = manager
+    app.state.secret_store = secret_store
 
     def job_payload(manifest: JobManifest) -> dict:
         payload = manifest.public_dict()
@@ -116,6 +121,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "data_directory": str(runtime_settings.data_dir),
         }
 
+    @app.post("/api/secrets/translator-api-key")
+    def save_translator_api_key(request: SecretSaveRequest) -> dict:
+        reference = secret_store.save(
+            request.value,
+            reference=request.reference,
+        )
+        return {
+            "ref": reference,
+            "storage": "macOS Keychain",
+        }
+
+    @app.delete("/api/secrets/translator-api-key/{reference}")
+    def delete_translator_api_key(reference: str) -> dict:
+        secret_store.delete(reference)
+        return {"deleted": True}
+
     @app.get("/api/jobs")
     def list_jobs(limit: int = 100) -> list[dict]:
         safe_limit = max(1, min(limit, 500))
@@ -150,6 +171,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return job_payload(manifest)
 
+    @app.post(
+        "/api/jobs/automated",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def create_automated_job(
+        request: AutomatedJobCreateRequest,
+    ) -> dict:
+        try:
+            validated = validate_remote_url(request.url, runtime_settings)
+            automated_settings = settings_for(request.settings)
+            if request.translator_api_key_ref:
+                automated_settings = automated_settings.model_copy(
+                    update={
+                        "translator_api_key": secret_store.read(
+                            request.translator_api_key_ref
+                        )
+                    }
+                )
+            settings_snapshot = request.settings.model_dump(
+                exclude_none=True
+            )
+            for secret in (
+                "translator_api_key",
+                "tts_http_api_key",
+            ):
+                settings_snapshot.pop(secret, None)
+            manifest = manager.submit(
+                validated,
+                request.options,
+                settings=automated_settings,
+                metadata={
+                    "run_mode": "automated",
+                    "runtime_settings": settings_snapshot,
+                    "translator_api_key_ref": (
+                        request.translator_api_key_ref
+                    ),
+                },
+            )
+        except (InvalidSourceError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return job_payload(manifest)
+
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
         try:
@@ -169,6 +232,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         try:
             manifest = manager.store.get(job_id)
+            if manager.is_running(job_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail="任务正在执行，请等待当前步骤完成。",
+                )
             selected_index = STEP_ORDER.index(step)
             if selected_index:
                 previous = STEP_ORDER[selected_index - 1].value

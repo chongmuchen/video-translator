@@ -7,7 +7,7 @@ import logging
 from ..models import JobManifest
 from .stepwise import StepwiseVideoTranslationPipeline
 from .synthesizer import SpeechSynthesizer
-from .transcriber import FasterWhisperTranscriber
+from .transcriber import FasterWhisperTranscriber, MlxWhisperTranscriber
 from .translator import SegmentTranslator
 
 
@@ -21,7 +21,9 @@ class VideoTranslationPipeline(StepwiseVideoTranslationPipeline):
     def _make_transcriber(
         self,
         logger: logging.Logger,
-    ) -> FasterWhisperTranscriber:
+    ) -> FasterWhisperTranscriber | MlxWhisperTranscriber:
+        if self.settings.asr_backend == "mlx_whisper":
+            return MlxWhisperTranscriber(self.settings, logger)
         return FasterWhisperTranscriber(self.settings, logger)
 
     def _make_translator(self, logger: logging.Logger) -> SegmentTranslator:
@@ -35,4 +37,3 @@ class VideoTranslationPipeline(StepwiseVideoTranslationPipeline):
 
     def run(self, manifest: JobManifest) -> JobManifest:
         return self.run_all(manifest)
-

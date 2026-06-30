@@ -39,3 +39,26 @@ def test_job_directory_can_include_title_and_still_resolve_by_id(
 def test_safe_job_title_has_readable_fallback_and_length_limit() -> None:
     assert safe_job_title(" / : ? ") == "untitled"
     assert safe_job_title("a" * 100) == "a" * 60
+
+
+def test_job_store_repairs_paths_after_data_directory_moves(
+    tmp_path: Path,
+) -> None:
+    old_data = tmp_path / "old" / "data"
+    old_store = JobStore(Settings(data_dir=old_data))
+    manifest = old_store.create("local.mp4", PipelineOptions())
+    source = old_store.job_dir(manifest.id) / "source.mp4"
+    source.write_bytes(b"media")
+    manifest.source_path = str(source)
+    old_store.save(manifest)
+
+    new_data = tmp_path / "new" / "data"
+    new_data.parent.mkdir()
+    old_data.rename(new_data)
+    new_store = JobStore(Settings(data_dir=new_data))
+
+    restored = new_store.get(manifest.id)
+
+    assert restored.source_path == str(
+        new_store.job_dir(manifest.id) / "source.mp4"
+    )

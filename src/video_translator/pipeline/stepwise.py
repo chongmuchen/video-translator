@@ -25,10 +25,11 @@ from .media import (
     normalize_tts_segments,
     probe_duration,
     separate_background,
+    write_duck_control,
     write_srt,
 )
 from .synthesizer import SpeechSynthesizer
-from .transcriber import FasterWhisperTranscriber
+from .transcriber import FasterWhisperTranscriber, MlxWhisperTranscriber
 from .translator import SegmentTranslator
 
 
@@ -70,7 +71,7 @@ TODO_ITEMS = [
     ("P1", "翻译过长时自动缩写并重新生成 TTS，而不是最终裁尾"),
     ("P1", "为下载、翻译和 TTS 增加统一重试、退避和断点恢复"),
     ("P1", "增加说话人分离和多角色音色映射"),
-    ("P1", "为 Web/API 增加取消任务和自动化测试"),
+    ("P1", "为 Web/API 增加任务取消"),
     ("P2", "增加可选口型同步"),
     ("P2", "把本地 JSON/线程池替换为数据库和分布式任务队列"),
     ("P2", "增加中间文件过期清理、指标和质量评估报告"),
@@ -154,7 +155,9 @@ class StepwiseVideoTranslationPipeline:
     def _make_transcriber(
         self,
         logger: logging.Logger,
-    ) -> FasterWhisperTranscriber:
+    ) -> FasterWhisperTranscriber | MlxWhisperTranscriber:
+        if self.settings.asr_backend == "mlx_whisper":
+            return MlxWhisperTranscriber(self.settings, logger)
         return FasterWhisperTranscriber(self.settings, logger)
 
     def _make_translator(self, logger: logging.Logger) -> SegmentTranslator:
@@ -495,6 +498,14 @@ class StepwiseVideoTranslationPipeline:
             if options.burn_subtitles is None
             else options.burn_subtitles
         )
+        duck_control_audio: Path | None = None
+        if duck_original:
+            duck_control_audio = write_duck_control(
+                self._load_segments(manifest),
+                self.store.job_dir(manifest.id) / "duck-control.wav",
+                total_duration=self._total_duration(manifest, media),
+                sample_rate=self.settings.dub_sample_rate,
+            )
         output = self.settings.outputs_dir / safe_output_name(
             manifest.title or "video",
             manifest.id,
@@ -510,6 +521,7 @@ class StepwiseVideoTranslationPipeline:
             duck_original_audio=duck_original,
             burn_subtitles=burn_subtitles,
             background_audio=background_audio,
+            duck_control_audio=duck_control_audio,
             logger=logger,
         )
         manifest.output_path = str(output)

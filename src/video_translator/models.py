@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .translation_providers import TranslatorProvider
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -82,6 +84,7 @@ class RuntimeSettingsUpdate(BaseModel):
     download_proxy: str | None = None
     download_impersonate: str | None = None
 
+    asr_backend: Literal["faster_whisper", "mlx_whisper"] | None = None
     asr_model: str | None = None
     asr_device: Literal["auto", "cpu", "cuda"] | None = None
     asr_compute_type: Literal[
@@ -93,10 +96,7 @@ class RuntimeSettingsUpdate(BaseModel):
         "float32",
     ] | None = None
 
-    translator_provider: Literal[
-        "openai_compatible",
-        "passthrough",
-    ] | None = None
+    translator_provider: TranslatorProvider | None = None
     translator_base_url: str | None = None
     translator_model: str | None = None
     translator_api_key: str | None = None
@@ -106,6 +106,8 @@ class RuntimeSettingsUpdate(BaseModel):
         le=3600,
     )
     translation_batch_size: int | None = Field(default=None, ge=1, le=100)
+    translator_codex_bin: str | None = None
+    translator_codex_model: str | None = None
 
     tts_provider: Literal["edge", "http", "cosyvoice"] | None = None
     tts_voice: str | None = None
@@ -136,6 +138,17 @@ class StagedJobCreateRequest(JobCreateRequest):
     settings: RuntimeSettingsUpdate = Field(
         default_factory=RuntimeSettingsUpdate
     )
+
+
+class AutomatedJobCreateRequest(StagedJobCreateRequest):
+    """Create a job and run all seven stages with one settings snapshot."""
+
+    translator_api_key_ref: str | None = None
+
+
+class SecretSaveRequest(BaseModel):
+    value: str = Field(min_length=1)
+    reference: str | None = None
 
 
 class StepRunRequest(BaseModel):

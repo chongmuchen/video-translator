@@ -43,7 +43,11 @@ else
 fi
 
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -e ".[all,dev]"
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  .venv/bin/python -m pip install -e ".[all,dev,mac]"
+else
+  .venv/bin/python -m pip install -e ".[all,dev]"
+fi
 
 # Fetch a project-local ffmpeg/ffprobe only when the machine has neither.
 .venv/bin/python -m video_translator.bootstrap

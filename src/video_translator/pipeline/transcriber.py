@@ -4,10 +4,32 @@ from __future__ import annotations
 
 import logging
 from typing import Iterable
+import wave
 
 from ..errors import ConfigurationError
 from ..models import Segment
 from ..settings import Settings
+
+
+MLX_MODEL_ALIASES = {
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "tiny.en": "mlx-community/whisper-tiny.en-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "base.en": "mlx-community/whisper-base.en-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "small.en": "mlx-community/whisper-small.en-mlx",
+    "medium": "mlx-community/whisper-medium-mlx",
+    "medium.en": "mlx-community/whisper-medium.en-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+    "turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+
+def mlx_model_name(model: str) -> str:
+    """Map familiar Whisper names to validated MLX Community models."""
+
+    return MLX_MODEL_ALIASES.get(model, model)
 
 
 def merge_segments(
@@ -116,8 +138,91 @@ class FasterWhisperTranscriber:
         metadata = {
             "detected_language": info.language,
             "language_probability": info.language_probability,
+            "asr_backend": "faster_whisper",
             "asr_model": self.settings.asr_model,
             "asr_device": device,
         }
         return segments, metadata
 
+
+class MlxWhisperTranscriber:
+    """Apple Silicon GPU transcription through Apple's MLX runtime."""
+
+    def __init__(self, settings: Settings, logger: logging.Logger):
+        self.settings = settings
+        self.logger = logger
+        try:
+            import mlx_whisper
+        except ImportError as exc:
+            raise ConfigurationError(
+                "缺少 mlx-whisper。Apple Silicon 请运行："
+                ".venv/bin/python -m pip install -e '.[mac]'"
+            ) from exc
+        self._module = mlx_whisper
+
+    @staticmethod
+    def _load_speech_wave(audio_path: str):
+        try:
+            import numpy as np
+        except ImportError as exc:
+            raise ConfigurationError(
+                "mlx-whisper 缺少 numpy 运行依赖。"
+            ) from exc
+        with wave.open(audio_path, "rb") as audio:
+            if (
+                audio.getnchannels() != 1
+                or audio.getsampwidth() != 2
+                or audio.getframerate() != 16000
+            ):
+                raise ConfigurationError(
+                    "MLX 输入必须是 extract 生成的 16 kHz "
+                    "单声道 PCM WAV。"
+                )
+            frames = audio.readframes(audio.getnframes())
+        return np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+
+    def transcribe(
+        self,
+        audio_path: str,
+        *,
+        language: str | None = None,
+    ) -> tuple[list[Segment], dict]:
+        model = mlx_model_name(self.settings.asr_model)
+        selected_language = language or self.settings.source_language or None
+        self.logger.info(
+            "加载 MLX ASR 模型 %s (Apple GPU/Metal)",
+            model,
+        )
+        samples = self._load_speech_wave(audio_path)
+        result = self._module.transcribe(
+            samples,
+            path_or_hf_repo=model,
+            language=selected_language,
+            word_timestamps=True,
+            condition_on_previous_text=True,
+            verbose=False,
+        )
+        segments: list[Segment] = []
+        for index, raw in enumerate(result.get("segments", [])):
+            text = str(raw.get("text") or "").strip()
+            if not text:
+                continue
+            start = max(0.0, float(raw.get("start") or 0.0))
+            end = max(float(raw.get("end") or start), start + 0.05)
+            segments.append(
+                Segment(
+                    index=index,
+                    start=start,
+                    end=end,
+                    source_text=text,
+                )
+            )
+        segments = merge_segments(segments)
+        metadata = {
+            "detected_language": result.get("language"),
+            "language_probability": None,
+            "asr_backend": "mlx_whisper",
+            "asr_model": model,
+            "asr_device": "metal",
+        }
+        return segments, metadata

@@ -1,0 +1,1701 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Video Translator · 本地控制台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18201c;
+      --muted: #69716c;
+      --paper: #f3f1ea;
+      --card: #fffefa;
+      --line: #dcd9cf;
+      --green: #174f3c;
+      --green-soft: #dcebe3;
+      --orange: #d86b3f;
+      --orange-soft: #f8e3d9;
+      --red: #a43e34;
+      --blue: #365b78;
+      --shadow: 0 18px 55px rgba(39, 43, 38, .08);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 4% 0%, rgba(216, 107, 63, .10), transparent 27rem),
+        var(--paper);
+      color: var(--ink);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 330px minmax(0, 1fr);
+    }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 27px 20px;
+      background: #17261f;
+      color: #f5f3ec;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 7px;
+    }
+    .mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      background: var(--orange);
+      font-weight: 850;
+      font-size: 18px;
+      box-shadow: 0 8px 25px rgba(216, 107, 63, .3);
+    }
+    .brand h1 { margin: 0; font-size: 18px; letter-spacing: -.3px; }
+    .local-note {
+      margin: 0 0 24px 50px;
+      color: #aebeb6;
+      font-size: 12px;
+    }
+    .side-title {
+      margin: 23px 4px 10px;
+      color: #9db0a6;
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+    .new-button {
+      width: 100%;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: rgba(255,255,255,.07);
+      color: white;
+      font-weight: 700;
+      text-align: left;
+    }
+    .new-button:hover { background: rgba(255,255,255,.12); }
+    .job-list { display: grid; gap: 8px; }
+    .job-item {
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: transparent;
+      color: #e9eee9;
+      text-align: left;
+    }
+    .job-item:hover { background: rgba(255,255,255,.06); }
+    .job-item.active {
+      border-color: rgba(255,255,255,.16);
+      background: rgba(255,255,255,.1);
+    }
+    .job-item strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .job-item span {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 7px;
+      color: #9eb0a7;
+      font-size: 11px;
+    }
+    .side-empty {
+      padding: 15px 10px;
+      color: #9eb0a7;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    main {
+      min-width: 0;
+      padding: 35px clamp(20px, 4vw, 58px) 70px;
+    }
+    .topbar {
+      max-width: 1180px;
+      margin: 0 auto 24px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--orange);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+    }
+    .topbar h2 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1.08;
+      letter-spacing: -1.6px;
+    }
+    .topbar p {
+      max-width: 700px;
+      margin: 9px 0 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .local-chip {
+      flex: 0 0 auto;
+      border: 1px solid #bdd3c7;
+      border-radius: 999px;
+      padding: 8px 12px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .workspace { max-width: 1180px; margin: 0 auto; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .empty-state {
+      padding: 70px 25px;
+      text-align: center;
+    }
+    .empty-state .big { font-size: 40px; }
+    .empty-state h3 { margin: 12px 0 6px; font-size: 22px; }
+    .empty-state p { margin: 0; color: var(--muted); }
+    .new-job { padding: 26px; }
+    .new-job h3 { margin: 0 0 6px; font-size: 22px; }
+    .new-job > p { margin: 0 0 22px; color: var(--muted); line-height: 1.6; }
+    .template-box {
+      margin-top: 18px;
+      border: 1px solid #d8d4c8;
+      border-radius: 13px;
+      padding: 0 16px 16px;
+      background: #fbfaf6;
+    }
+    .template-box summary {
+      padding: 14px 0;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .field { min-width: 0; }
+    .field.wide { grid-column: 1 / -1; }
+    .field label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 7px;
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .recommended {
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 800;
+    }
+    input:not([type=checkbox]), select, textarea {
+      width: 100%;
+      border: 1px solid #cbc9bf;
+      border-radius: 10px;
+      padding: 11px 12px;
+      background: #fff;
+      color: var(--ink);
+      outline: none;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px rgba(23, 79, 60, .12);
+    }
+    .help {
+      margin: 6px 1px 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .check-field {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      padding-top: 4px;
+    }
+    .check-field input { margin-top: 3px; accent-color: var(--green); }
+    .check-field label { display: block; margin: 0; font-weight: 700; }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 22px;
+      flex-wrap: wrap;
+    }
+    .primary, .secondary, .step-run {
+      border: 0;
+      border-radius: 10px;
+      padding: 11px 16px;
+      font-weight: 750;
+    }
+    .primary, .step-run { background: var(--green); color: white; }
+    .primary:hover, .step-run:hover { background: #0f3e2e; }
+    .secondary {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .legal { color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .job-header { padding: 23px 25px; }
+    .job-headline {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+    }
+    .job-title {
+      margin: 0 0 7px;
+      font-size: clamp(21px, 3vw, 30px);
+      letter-spacing: -.6px;
+    }
+    .job-meta {
+      display: flex;
+      gap: 8px 15px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status-badge {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 7px 11px;
+      background: var(--orange-soft);
+      color: #8e3e20;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .status-badge.done { background: var(--green-soft); color: var(--green); }
+    .status-badge.failed { background: #f4d9d6; color: var(--red); }
+    .progress-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .bar {
+      height: 9px;
+      margin-top: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e2d9;
+    }
+    .bar div {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--orange), #eca177);
+      transition: width .3s ease;
+    }
+    .job-error {
+      display: none;
+      margin-top: 16px;
+      border-radius: 10px;
+      padding: 12px;
+      background: #f8e1de;
+      color: var(--red);
+      white-space: pre-wrap;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .steps {
+      margin-top: 18px;
+      display: grid;
+      gap: 12px;
+    }
+    .step-card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--card);
+    }
+    .step-summary {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      border: 0;
+      padding: 16px 18px;
+      background: transparent;
+      color: var(--ink);
+      text-align: left;
+    }
+    .step-number {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #e7e4dc;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .step-card.complete .step-number { background: var(--green); color: white; }
+    .step-card.current { border-color: #dca081; box-shadow: 0 9px 30px rgba(216,107,63,.09); }
+    .step-card.current .step-number { background: var(--orange); color: white; }
+    .step-name strong { display: block; font-size: 15px; }
+    .step-name span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .step-state { color: var(--muted); font-size: 11px; font-weight: 750; }
+    .step-body {
+      display: none;
+      border-top: 1px solid #ebe8e0;
+      padding: 18px;
+      background: #fbfaf6;
+    }
+    .step-card.open .step-body { display: block; }
+    .recommendation {
+      margin: 0 0 17px;
+      border-left: 3px solid var(--orange);
+      padding: 9px 12px;
+      background: var(--orange-soft);
+      color: #70412e;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .command {
+      margin-top: 14px;
+      border-radius: 9px;
+      padding: 10px 12px;
+      background: #17261f;
+      color: #dce8e1;
+      overflow: auto;
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre;
+    }
+    .force-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .force-row input { accent-color: var(--orange); }
+    .inspect {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .inspect-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--card);
+      overflow: hidden;
+    }
+    .inspect-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+    }
+    .inspect-head h4 { margin: 0; font-size: 13px; }
+    .text-button {
+      border: 0;
+      background: none;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 750;
+    }
+    pre {
+      height: 260px;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      background: #17201c;
+      color: #d8e1dc;
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+    }
+    .transcript {
+      height: 260px;
+      overflow: auto;
+      padding: 4px 14px 14px;
+    }
+    .segment {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #ece9e1;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .segment time { color: var(--orange); font-family: ui-monospace, monospace; }
+    .placeholder { padding: 25px 5px; color: var(--muted); text-align: center; font-size: 12px; }
+    .toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 10;
+      max-width: 440px;
+      display: none;
+      border-radius: 12px;
+      padding: 13px 16px;
+      background: #17261f;
+      color: white;
+      box-shadow: 0 15px 45px rgba(0,0,0,.22);
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .toast.error { background: var(--red); }
+    @media (max-width: 880px) {
+      .shell { display: block; }
+      aside { position: static; height: auto; max-height: 360px; }
+      main { padding-top: 25px; }
+      .inspect { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 610px) {
+      .grid { grid-template-columns: 1fr; }
+      .field.wide { grid-column: auto; }
+      .topbar { display: block; }
+      .local-chip { display: inline-block; margin-top: 14px; }
+      .job-headline { display: block; }
+      .status-badge { display: inline-block; margin-top: 12px; }
+      .step-summary { grid-template-columns: 34px minmax(0,1fr); }
+      .step-state { grid-column: 2; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <div class="mark">译</div>
+        <h1>Video Translator</h1>
+      </div>
+      <p class="local-note">本地流水线控制台</p>
+      <button class="new-button" id="new-job-button">＋ 新建本地任务</button>
+      <div class="side-title">历史任务</div>
+      <div class="job-list" id="job-list"></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local workflow</p>
+          <h2>把长流程拆开，逐步看清。</h2>
+          <p>下载、抽取、识别、翻译、配音、对齐、封装，每一步都能单独配置、执行和检查。</p>
+        </div>
+        <div class="local-chip" id="local-chip">● 仅写入本机</div>
+      </header>
+
+      <div class="workspace">
+        <section class="panel new-job" id="new-job-panel">
+          <h3>第一步：创建并下载</h3>
+          <p>支持 YouTube、B站单集和 Apple Podcasts 单集。任务清单和媒体保存在项目的 <code>data/</code>；使用云翻译或在线 TTS 时，文本会发送到你配置的服务。</p>
+          <form id="new-job-form">
+            <div class="grid">
+              <div class="field wide">
+                <label for="source-url">视频或播客 URL <span class="recommended">必填</span></label>
+                <input id="source-url" name="url" type="url" required
+                  placeholder="https://www.youtube.com/watch?v=...">
+                <p class="help">B站分 P 请保留 <code>?p=数字</code>；Apple Podcasts 必须是包含 <code>?i=</code> 的单集链接。</p>
+              </div>
+              <div class="field">
+                <label for="create-mode">运行方式</label>
+                <select id="create-mode">
+                  <option value="automated" selected>按模板自动跑完 7 步（推荐）</option>
+                  <option value="staged">只下载，之后逐步检查</option>
+                </select>
+                <p class="help">自动模式失败后仍可从失败步骤继续，不需要重新下载。</p>
+              </div>
+              <div class="field" id="template-picker-field">
+                <label for="create-template">配置模板</label>
+                <select id="create-template">
+                  <option value="mac_codex" selected>Mac + Codex CLI + Edge TTS</option>
+                  <option value="mac_ollama">Mac + Ollama + Edge TTS</option>
+                  <option value="last">我上次保存的模板</option>
+                </select>
+                <p class="help">普通配置保存在浏览器；API Key 可安全保存到 macOS Keychain。</p>
+              </div>
+              <div class="field">
+                <label for="create-height">最高画质</label>
+                <select id="create-height">
+                  <option value="720">720p（速度优先）</option>
+                  <option value="1080" selected>1080p（推荐）</option>
+                  <option value="1440">1440p</option>
+                  <option value="2160">2160p</option>
+                </select>
+                <p class="help">播客纯音频不受该选项影响。</p>
+              </div>
+              <div class="field">
+                <label for="create-backend">下载后端 <span class="recommended">推荐 auto</span></label>
+                <select id="create-backend">
+                  <option value="auto" selected>auto — B站优先 curl</option>
+                  <option value="native">native — yt-dlp 内置下载</option>
+                  <option value="curl">curl — 强制系统 curl</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="create-language">原始语言</label>
+                <input id="create-language" placeholder="留空自动检测，例如 en">
+                <p class="help">可以稍后在语音识别步骤修改。</p>
+              </div>
+              <div class="field">
+                <label for="create-cookies">浏览器 Cookies</label>
+                <select id="create-cookies">
+                  <option value="" selected>不读取（公开视频推荐）</option>
+                  <option value="chrome">Chrome</option>
+                  <option value="safari">Safari</option>
+                  <option value="firefox">Firefox</option>
+                </select>
+              </div>
+              <div class="check-field">
+                <input id="create-original" type="checkbox" checked>
+                <div>
+                  <label for="create-original">最终保留原声音轨</label>
+                  <p class="help">视频输出包含中文配音和原声两个音轨。</p>
+                </div>
+              </div>
+              <div class="check-field">
+                <input id="create-burn" type="checkbox">
+                <div>
+                  <label for="create-burn">烧录中文字幕</label>
+                  <p class="help">默认使用可开关软字幕，兼容性问题时再烧录。</p>
+                </div>
+              </div>
+            </div>
+            <details class="template-box" id="automation-settings">
+              <summary>一键运行模板设置（展开检查或修改）</summary>
+              <div class="grid">
+                <div class="field">
+                  <label for="template-asr-backend">语音识别后端</label>
+                  <select id="template-asr-backend">
+                    <option value="mlx_whisper" selected>MLX — Apple GPU / Metal</option>
+                    <option value="faster_whisper">faster-whisper — CPU / CUDA</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="template-asr-model">Whisper 模型</label>
+                  <select id="template-asr-model">
+                    <option value="small" selected>small — 通用推荐</option>
+                    <option value="small.en">small.en — 纯英语</option>
+                    <option value="medium">medium — 更高质量</option>
+                    <option value="large-v3">large-v3 — 质量优先</option>
+                    <option value="turbo">turbo — 大模型加速版</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="template-translator-provider">翻译后端</label>
+                  <select id="template-translator-provider">
+                    <option value="codex_cli" selected>本机 Codex CLI（复用登录）</option>
+                    <option value="ollama">Ollama（完全本地）</option>
+                    <option value="kimi">Kimi API</option>
+                    <option value="minimax">MiniMax API</option>
+                    <option value="deepseek">DeepSeek API</option>
+                    <option value="openai_compatible">其他 OpenAI-compatible</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="template-translator-model">翻译模型</label>
+                  <input id="template-translator-model" value=""
+                    placeholder="Codex 留空使用默认模型">
+                </div>
+                <div class="field">
+                  <label for="template-translator-base-url">翻译接口地址</label>
+                  <input id="template-translator-base-url"
+                    value="http://127.0.0.1:11434/v1">
+                </div>
+                <div class="field">
+                  <label for="template-translator-api-key">翻译 API Key</label>
+                  <input id="template-translator-api-key" type="password"
+                    placeholder="Codex CLI / Ollama 留空">
+                  <p class="help">点击保存模板后写入 macOS Keychain；任务文件只记录引用，不记录密钥明文。</p>
+                </div>
+                <div class="field">
+                  <label for="template-translation-batch-size">每批翻译片段数</label>
+                  <input id="template-translation-batch-size" type="number"
+                    min="1" max="100" value="12">
+                </div>
+                <div class="field">
+                  <label for="template-tts-provider">中文语音后端</label>
+                  <select id="template-tts-provider">
+                    <option value="edge" selected>Edge TTS</option>
+                    <option value="cosyvoice">CosyVoice</option>
+                    <option value="http">通用 HTTP</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="template-tts-voice">中文音色</label>
+                  <input id="template-tts-voice"
+                    value="zh-CN-XiaoxiaoNeural">
+                </div>
+                <div class="field">
+                  <label for="template-tts-rate">TTS 固定语速</label>
+                  <input id="template-tts-rate" value="+0%">
+                  <p class="help">通常保持 +0%；后面的对齐步骤会按片段需要自动加速。</p>
+                </div>
+                <div class="field">
+                  <label for="template-tts-volume">TTS 音量</label>
+                  <input id="template-tts-volume" value="+0%">
+                </div>
+                <div class="field">
+                  <label for="template-max-tempo">对齐最大语速倍率</label>
+                  <input id="template-max-tempo" type="number"
+                    min="1" max="4" step="0.1" value="1.8">
+                  <p class="help">先用 1.0；只有读不完才加速，最高 1.8 倍。</p>
+                </div>
+                <div class="field">
+                  <label for="template-cosyvoice-url">CosyVoice 地址</label>
+                  <input id="template-cosyvoice-url"
+                    value="http://127.0.0.1:50000">
+                </div>
+                <div class="field">
+                  <label for="template-http-tts-url">通用 HTTP TTS 地址</label>
+                  <input id="template-http-tts-url"
+                    placeholder="仅 TTS provider=http 时填写">
+                </div>
+                <div class="field wide">
+                  <label for="template-glossary">术语表 JSON</label>
+                  <textarea id="template-glossary"
+                    placeholder='{"Whisper":"Whisper","pipeline":"流水线"}'></textarea>
+                </div>
+                <div class="check-field">
+                  <input id="template-duck-original" type="checkbox" checked>
+                  <div>
+                    <label for="template-duck-original">整段压低原始人声</label>
+                    <p class="help">按识别片段的完整起止时间压低，中文提前读完也不会冒出英文尾音。</p>
+                  </div>
+                </div>
+                <div class="check-field">
+                  <input id="template-demucs" type="checkbox">
+                  <div>
+                    <label for="template-demucs">启用 Demucs 分离背景音</label>
+                    <p class="help">可保留更多音乐，但很慢且仍可能有少量人声残留；默认先关闭。</p>
+                  </div>
+                </div>
+              </div>
+              <div class="actions">
+                <button class="secondary" id="save-template" type="button">保存为“我上次的模板”</button>
+                <span class="legal">普通配置保存在浏览器；API Key 保存在 macOS 登录钥匙串。</span>
+              </div>
+            </details>
+            <div class="actions">
+              <button class="primary" id="create-submit" type="submit">创建任务并自动跑完 7 步</button>
+              <span class="legal">仅处理你拥有版权、已获授权或依法允许处理的内容。</span>
+            </div>
+          </form>
+        </section>
+
+        <section id="job-panel" hidden>
+          <div class="panel job-header">
+            <div class="job-headline">
+              <div>
+                <h3 class="job-title" id="job-title">任务</h3>
+                <div class="job-meta">
+                  <span id="job-id"></span>
+                  <span id="job-directory"></span>
+                  <span id="job-next"></span>
+                </div>
+              </div>
+              <span class="status-badge" id="job-status">queued</span>
+            </div>
+            <div class="progress-row">
+              <span id="job-message">等待处理</span>
+              <span id="job-progress">0%</span>
+            </div>
+            <div class="bar"><div id="progress-bar"></div></div>
+            <div class="job-error" id="job-error"></div>
+          </div>
+
+          <div class="steps" id="steps"></div>
+
+          <div class="inspect">
+            <section class="inspect-card">
+              <div class="inspect-head">
+                <h4>流水线日志</h4>
+                <button class="text-button" id="refresh-log">刷新</button>
+              </div>
+              <pre id="log-output">还没有日志。</pre>
+            </section>
+            <section class="inspect-card">
+              <div class="inspect-head">
+                <h4 id="transcript-title">识别片段预览</h4>
+                <button class="text-button" id="refresh-transcript">刷新</button>
+              </div>
+              <div class="transcript" id="transcript">
+                <div class="placeholder">完成语音识别后，这里会显示带时间戳的文本。</div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel empty-state" id="empty-panel" hidden>
+          <div class="big">⌁</div>
+          <h3>选择一个历史任务</h3>
+          <p>或者点击左侧“新建本地任务”开始第一步。</p>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const stepDefinitions = [
+      {
+        id: "download",
+        name: "下载 / 获取媒体",
+        description: "从 URL 下载视频或播客，并检查音轨和时长",
+        recommendation: "推荐保持 auto：B站媒体会优先使用系统 curl 断点续传，YouTube 和 Apple Podcasts 使用 yt-dlp。登录内容才需要 Cookies。",
+        command: id => `make download-one URL='视频URL'\\n# 已有任务强制重下：\\n.venv/bin/python main.py step ${id} download --force`,
+        fields: [
+          {key: "max_download_height", scope: "settings", label: "最高画质", type: "select", value: "1080", options: [["720","720p"],["1080","1080p（推荐）"],["1440","1440p"],["2160","2160p"]], help: "只影响视频，纯音频忽略。"},
+          {key: "download_backend", scope: "settings", label: "下载后端", type: "select", value: "auto", options: [["auto","auto（推荐）"],["native","yt-dlp native"],["curl","系统 curl"]], help: "B站 TLS 不稳定时可明确选 curl。"},
+          {key: "cookies_from_browser", scope: "settings", label: "Cookies 来源", type: "select", value: "", options: [["","不读取"],["chrome","Chrome"],["safari","Safari"],["firefox","Firefox"]], help: "仅登录、会员或年龄限制内容需要。"},
+          {key: "download_proxy", scope: "settings", label: "代理", type: "text", value: "", placeholder: "留空使用系统设置；direct 表示直连", help: "B站出现 412 或 TLS 错误时可尝试 direct。"},
+          {key: "download_impersonate", scope: "settings", label: "浏览器模拟", type: "text", value: "", placeholder: "例如 chrome", help: "站点风控时使用，普通下载留空。"}
+        ]
+      },
+      {
+        id: "extract",
+        name: "抽取识别音频",
+        description: "FFmpeg 生成 16 kHz 单声道 PCM WAV",
+        recommendation: "这一步没有质量选项。16 kHz 单声道是 Whisper 的标准识别输入，避免把视频画面和多声道数据带入 ASR。",
+        command: id => `make extract JOB_ID='${id}'`,
+        fields: []
+      },
+      {
+        id: "transcribe",
+        name: "语音识别与时间戳",
+        description: "可选择 Apple GPU/MLX 或 faster-whisper CPU/CUDA",
+        recommendation: "当前 Mac 推荐 MLX（Apple GPU/Metal）。英文长节目先用 small.en，多语言用 small，正式质量再选 large-v3；遇到兼容问题可切回 faster-whisper CPU int8。",
+        command: id => `make transcribe JOB_ID='${id}' ASR_BACKEND=mlx_whisper ASR_MODEL=small.en SOURCE_LANGUAGE=en`,
+        fields: [
+          {key: "asr_backend", scope: "settings", label: "识别后端", type: "select", value: "mlx_whisper", options: [["mlx_whisper","MLX — Apple GPU / Metal（当前 Mac 推荐）"],["faster_whisper","faster-whisper — CPU / NVIDIA CUDA"]], help: "两个后端输出相同的 segments.json，后续翻译流程无需改变。"},
+          {key: "asr_model", scope: "settings", label: "Whisper 模型", type: "select", value: "small", options: [["tiny","tiny — 只验线路"],["base","base — 快速草稿"],["small","small — 多语言推荐"],["small.en","small.en — 英语推荐"],["medium","medium — 更高质量"],["large-v3","large-v3 — 质量优先"],["turbo","turbo — 大模型加速版"]], help: "模型首次使用会下载并缓存在本机。"},
+          {key: "source_language", scope: "options", label: "原始语言", type: "text", value: "", placeholder: "en / zh / ja；留空自动检测", help: "填写正确语言能减少误判；它不是翻译目标语言。"},
+          {key: "asr_device", scope: "settings", label: "faster-whisper 计算设备", type: "select", value: "cpu", options: [["auto","auto"],["cpu","CPU"],["cuda","NVIDIA CUDA"]], help: "仅 faster-whisper 使用；选择 MLX 时自动禁用。"},
+          {key: "asr_compute_type", scope: "settings", label: "faster-whisper 计算精度", type: "select", value: "int8", options: [["auto","auto"],["int8","int8（CPU 推荐）"],["int8_float32","int8_float32"],["int8_float16","int8_float16（CUDA）"],["float16","float16（CUDA）"],["float32","float32"]], help: "仅 faster-whisper 使用；CPU 推荐 int8，NVIDIA GPU 推荐 float16。"}
+        ]
+      },
+      {
+        id: "translate",
+        name: "翻译为中文",
+        description: "可选本机 Codex CLI、Ollama 或云模型并生成中文字幕",
+        recommendation: "你已安装 Codex CLI，可直接复用其登录态，留空模型名就使用 Codex 当前默认模型。Codex CLI 是本机入口，不代表离线推理；字幕仍可能发送到 OpenAI。若要求文本不离开电脑，请选 Ollama。Kimi、MiniMax、DeepSeek 会把字幕发送给对应厂商。",
+        command: id => `# 复用本机 Codex 登录（推荐先试）\nmake translate JOB_ID='${id}' TRANSLATOR_PROVIDER=codex_cli\n# 其他示例：\nmake translate JOB_ID='${id}' TRANSLATOR_PROVIDER=kimi TRANSLATOR_API_KEY='...'`,
+        fields: [
+          {key: "target_language", scope: "options", label: "目标语言", type: "text", value: "简体中文", help: "当前配音流程推荐简体中文。"},
+          {key: "translator_provider", scope: "settings", label: "翻译提供方", type: "select", value: "codex_cli", options: [["codex_cli","本机 Codex CLI（复用登录）"],["ollama","Ollama（完全本地）"],["kimi","Kimi API"],["minimax","MiniMax API"],["deepseek","DeepSeek API"],["openai_compatible","其他 OpenAI-compatible"],["passthrough","passthrough（只测试，不翻译）"]], help: "选择厂商会自动填写当前推荐地址和模型，地址及模型仍可修改。"},
+          {key: "translator_base_url", scope: "settings", label: "接口地址", type: "text", value: "http://127.0.0.1:11434/v1", help: "仅 Ollama、云 API 或其他兼容接口使用。"},
+          {key: "translator_model", scope: "settings", label: "接口模型名称", type: "text", value: "qwen3:8b", help: "必须与对应服务端已经安装或可访问的模型一致。"},
+          {key: "translator_api_key", scope: "settings", label: "API Key", type: "password", value: "", placeholder: "Codex CLI / Ollama 留空", help: "只随本次请求传给本地后端，页面不会回显或写入任务文件。"},
+          {key: "translator_codex_bin", scope: "settings", label: "Codex CLI 命令", type: "text", value: "codex", help: "一般保持 codex；也可以填写可执行文件的绝对路径。"},
+          {key: "translator_codex_model", scope: "settings", label: "Codex 模型（可选）", type: "text", value: "", placeholder: "留空使用 Codex 当前默认模型", help: "只有 provider=Codex CLI 时生效；不建议为了翻译随意写一个未经账号支持的模型名。"},
+          {key: "translation_batch_size", scope: "settings", label: "每批片段数", type: "number", value: "12", min: "1", max: "100", help: "推荐 12；上下文不足可调大，接口超时可调小。"},
+          {key: "glossary", scope: "options", label: "术语表 JSON", type: "textarea", value: "", placeholder: "{\"Whisper\":\"Whisper\", \"pipeline\":\"流水线\"}", help: "必须是“原词: 译词”的 JSON 对象。", wide: true, json: true}
+        ]
+      },
+      {
+        id: "synthesize",
+        name: "生成中文语音",
+        description: "逐个翻译片段生成中文 TTS",
+        recommendation: "首次推荐 Edge TTS + 晓晓音色，配置最少。需要本地模型或声音克隆时再连接 CosyVoice，并确保参考声音已获授权。",
+        command: id => `make synthesize JOB_ID='${id}' TTS_PROVIDER=edge TTS_VOICE='zh-CN-XiaoxiaoNeural'`,
+        fields: [
+          {key: "tts_provider", scope: "settings", label: "TTS 提供方", type: "select", value: "edge", options: [["edge","Edge TTS（首次推荐）"],["cosyvoice","CosyVoice"],["http","通用 HTTP"]], help: "Edge 需要联网；CosyVoice/HTTP 连接你自己的服务。"},
+          {key: "tts_voice", scope: "settings", label: "音色", type: "text", value: "zh-CN-XiaoxiaoNeural", help: "Edge 推荐晓晓；CosyVoice 填服务端 spk_id。"},
+          {key: "tts_rate", scope: "settings", label: "语速", type: "text", value: "+0%", help: "例如 +10% 或 -10%；时间轴步骤还会二次对齐。"},
+          {key: "tts_volume", scope: "settings", label: "音量", type: "text", value: "+0%", help: "例如 +0%、+10%、-10%。"},
+          {key: "tts_http_url", scope: "settings", label: "通用 HTTP 地址", type: "text", value: "", placeholder: "仅 provider=http 时填写", help: "服务应接收 JSON 并返回音频。"},
+          {key: "cosyvoice_base_url", scope: "settings", label: "CosyVoice 地址", type: "text", value: "http://127.0.0.1:50000", help: "仅 provider=cosyvoice 时使用。"},
+          {key: "cosyvoice_mode", scope: "settings", label: "CosyVoice 模式", type: "select", value: "sft", options: [["sft","sft"],["zero_shot","zero_shot"],["cross_lingual","cross_lingual"],["instruct","instruct"],["instruct2","instruct2"]], help: "首次建议 sft；其他模式还需在 .env 配置参考音频或指令。"}
+        ]
+      },
+      {
+        id: "align",
+        name: "配音时间轴对齐",
+        description: "拉伸、补静音并拼接完整中文配音",
+        recommendation: "推荐 24 kHz 和最大 1.8 倍加速。程序先按 1.0 原速检查；只有某句超过自己的时间槽才加速到刚好放下，且不会超过 1.8 倍。",
+        command: id => `make align JOB_ID='${id}' DUB_SAMPLE_RATE=24000 MAX_TEMPO_FACTOR=1.8`,
+        fields: [
+          {key: "dub_sample_rate", scope: "settings", label: "配音采样率", type: "select", value: "24000", options: [["22050","22050 Hz"],["24000","24000 Hz（推荐）"],["44100","44100 Hz"],["48000","48000 Hz"]], help: "24 kHz 已足够语音，体积和质量均衡。"},
+          {key: "max_tempo_factor", scope: "settings", label: "最大语速倍率", type: "number", value: "1.8", min: "1", max: "4", step: "0.1", help: "不是统一播放 1.8 倍：默认 1.0，只有读不完的片段才按需加速，最高 1.8。"}
+        ]
+      },
+      {
+        id: "mux",
+        name: "混音、字幕与封装",
+        description: "输出中文配音视频、软字幕和可选原声音轨",
+        recommendation: "推荐开启整段压低原声：控制轨覆盖完整识别时间槽，中文提前读完后英文尾音也不会恢复。Demucs 可保留更多背景音乐，但分离不可能完全无残留，而且处理很慢。",
+        command: id => `make mux JOB_ID='${id}' KEEP_ORIGINAL_AUDIO=true DUCK_ORIGINAL_AUDIO=true BURN_SUBTITLES=false ENABLE_DEMUCS=false`,
+        fields: [
+          {key: "keep_original_audio", scope: "options", label: "保留原声音轨", type: "checkbox", value: true, help: "输出第二音轨，方便播放器切换。"},
+          {key: "duck_original_audio", scope: "options", label: "整段压低原声", type: "checkbox", value: true, help: "按识别片段的完整起止时间压低，不再只跟随中文实际波形。"},
+          {key: "burn_subtitles", scope: "options", label: "烧录字幕", type: "checkbox", value: false, help: "默认软字幕可关闭；烧录兼容更广但需要重编码画面。"},
+          {key: "enable_demucs", scope: "settings", label: "启用 Demucs 人声/BGM 分离", type: "checkbox", value: false, help: "实验性高耗时选项，需另装 demucs。"}
+        ]
+      }
+    ];
+
+    const state = {
+      jobs: [],
+      selected: null,
+      timer: null,
+      pollDelay: null,
+    };
+    const $ = selector => document.querySelector(selector);
+    const templateStorageKey = "video-translator-automation-template-v1";
+    const automationTemplates = {
+      mac_codex: {
+        height: "1080",
+        downloadBackend: "auto",
+        cookies: "",
+        sourceLanguage: "",
+        keepOriginal: true,
+        burnSubtitles: false,
+        asrBackend: "mlx_whisper",
+        asrModel: "small",
+        translatorProvider: "codex_cli",
+        translatorBaseUrl: "http://127.0.0.1:11434/v1",
+        translatorModel: "",
+        translationBatchSize: 12,
+        ttsProvider: "edge",
+        ttsVoice: "zh-CN-XiaoxiaoNeural",
+        ttsRate: "+0%",
+        ttsVolume: "+0%",
+        cosyvoiceUrl: "http://127.0.0.1:50000",
+        httpTtsUrl: "",
+        maxTempo: 1.8,
+        glossary: "",
+        duckOriginal: true,
+        enableDemucs: false,
+      },
+      mac_ollama: {
+        height: "1080",
+        downloadBackend: "auto",
+        cookies: "",
+        sourceLanguage: "",
+        keepOriginal: true,
+        burnSubtitles: false,
+        asrBackend: "mlx_whisper",
+        asrModel: "small",
+        translatorProvider: "ollama",
+        translatorBaseUrl: "http://127.0.0.1:11434/v1",
+        translatorModel: "qwen3:8b",
+        translationBatchSize: 12,
+        ttsProvider: "edge",
+        ttsVoice: "zh-CN-XiaoxiaoNeural",
+        ttsRate: "+0%",
+        ttsVolume: "+0%",
+        cosyvoiceUrl: "http://127.0.0.1:50000",
+        httpTtsUrl: "",
+        maxTempo: 1.8,
+        glossary: "",
+        duckOriginal: true,
+        enableDemucs: false,
+      },
+    };
+    const createTranslatorPresets = {
+      ollama: ["http://127.0.0.1:11434/v1", "qwen3:8b"],
+      kimi: ["https://api.moonshot.cn/v1", "kimi-k2.6"],
+      minimax: ["https://api.minimaxi.com/v1", "MiniMax-M2.7"],
+      deepseek: ["https://api.deepseek.com", "deepseek-v4-flash"],
+    };
+
+    function setCreateField(id, value) {
+      const input = $(id);
+      if (input.type === "checkbox") input.checked = Boolean(value);
+      else input.value = value ?? "";
+    }
+
+    function collectAutomationTemplate() {
+      return {
+        height: $("#create-height").value,
+        downloadBackend: $("#create-backend").value,
+        cookies: $("#create-cookies").value,
+        sourceLanguage: $("#create-language").value.trim(),
+        keepOriginal: $("#create-original").checked,
+        burnSubtitles: $("#create-burn").checked,
+        asrBackend: $("#template-asr-backend").value,
+        asrModel: $("#template-asr-model").value,
+        translatorProvider: $("#template-translator-provider").value,
+        translatorBaseUrl: $("#template-translator-base-url").value.trim(),
+        translatorModel: $("#template-translator-model").value.trim(),
+        translatorApiKeyRef:
+          $("#template-translator-api-key").dataset.secretRef || "",
+        translationBatchSize: Number($("#template-translation-batch-size").value),
+        ttsProvider: $("#template-tts-provider").value,
+        ttsVoice: $("#template-tts-voice").value.trim(),
+        ttsRate: $("#template-tts-rate").value.trim(),
+        ttsVolume: $("#template-tts-volume").value.trim(),
+        cosyvoiceUrl: $("#template-cosyvoice-url").value.trim(),
+        httpTtsUrl: $("#template-http-tts-url").value.trim(),
+        maxTempo: Number($("#template-max-tempo").value),
+        glossary: $("#template-glossary").value.trim(),
+        duckOriginal: $("#template-duck-original").checked,
+        enableDemucs: $("#template-demucs").checked,
+      };
+    }
+
+    function syncCreateTranslator(applyPreset = false) {
+      const provider = $("#template-translator-provider").value;
+      const baseUrl = $("#template-translator-base-url");
+      const model = $("#template-translator-model");
+      const apiKey = $("#template-translator-api-key");
+      if (applyPreset && createTranslatorPresets[provider]) {
+        [baseUrl.value, model.value] = createTranslatorPresets[provider];
+      }
+      if (applyPreset) {
+        apiKey.value = "";
+        apiKey.dataset.secretRef = "";
+      }
+      if (applyPreset && provider === "codex_cli") model.value = "";
+      const usesCodex = provider === "codex_cli";
+      for (const input of [baseUrl, apiKey]) {
+        input.disabled = usesCodex;
+        input.closest(".field").style.opacity = usesCodex ? ".48" : "1";
+      }
+      model.placeholder = usesCodex
+        ? "留空使用 Codex 当前默认模型"
+        : "填写服务端模型名";
+    }
+
+    function applyAutomationTemplate(template) {
+      const mapping = {
+        "#create-height": template.height,
+        "#create-backend": template.downloadBackend,
+        "#create-cookies": template.cookies,
+        "#create-language": template.sourceLanguage,
+        "#create-original": template.keepOriginal,
+        "#create-burn": template.burnSubtitles,
+        "#template-asr-backend": template.asrBackend,
+        "#template-asr-model": template.asrModel,
+        "#template-translator-provider": template.translatorProvider,
+        "#template-translator-base-url": template.translatorBaseUrl,
+        "#template-translator-model": template.translatorModel,
+        "#template-translation-batch-size": template.translationBatchSize,
+        "#template-tts-provider": template.ttsProvider,
+        "#template-tts-voice": template.ttsVoice,
+        "#template-tts-rate": template.ttsRate,
+        "#template-tts-volume": template.ttsVolume,
+        "#template-cosyvoice-url": template.cosyvoiceUrl,
+        "#template-http-tts-url": template.httpTtsUrl,
+        "#template-max-tempo": template.maxTempo,
+        "#template-glossary": template.glossary,
+        "#template-duck-original": template.duckOriginal,
+        "#template-demucs": template.enableDemucs,
+      };
+      Object.entries(mapping).forEach(
+        ([id, value]) => setCreateField(id, value)
+      );
+      const apiKey = $("#template-translator-api-key");
+      apiKey.value = "";
+      apiKey.dataset.secretRef = template.translatorApiKeyRef || "";
+      apiKey.placeholder = template.translatorApiKeyRef
+        ? "已保存在 macOS Keychain；留空继续使用"
+        : "Codex CLI / Ollama 留空";
+      syncCreateTranslator();
+    }
+
+    function readSavedAutomationTemplate() {
+      try {
+        const value = JSON.parse(localStorage.getItem(templateStorageKey));
+        return value && typeof value === "object" ? value : null;
+      } catch {
+        return null;
+      }
+    }
+
+    async function saveAutomationTemplate(showNotice = true) {
+      const template = collectAutomationTemplate();
+      const apiKey = $("#template-translator-api-key");
+      const provider = $("#template-translator-provider").value;
+      const secret = apiKey.value.trim();
+      if (
+        secret &&
+        !["codex_cli", "ollama"].includes(provider)
+      ) {
+        const saved = await api("/api/secrets/translator-api-key", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            value: secret,
+            reference: apiKey.dataset.secretRef || null,
+          }),
+        });
+        template.translatorApiKeyRef = saved.ref;
+        apiKey.value = "";
+        apiKey.dataset.secretRef = saved.ref;
+        apiKey.placeholder = "已保存在 macOS Keychain；留空继续使用";
+      } else if (["codex_cli", "ollama"].includes(provider)) {
+        template.translatorApiKeyRef = "";
+      }
+      localStorage.setItem(
+        templateStorageKey,
+        JSON.stringify(template)
+      );
+      $("#create-template").querySelector('option[value="last"]').disabled = false;
+      if (showNotice) {
+        notify("模板已保存；API Key 已安全写入 macOS Keychain。");
+      }
+      return template;
+    }
+
+    function syncCreateMode() {
+      const automated = $("#create-mode").value === "automated";
+      $("#automation-settings").hidden = !automated;
+      $("#template-picker-field").hidden = !automated;
+      $("#create-submit").textContent = automated
+        ? "创建任务并自动跑完 7 步"
+        : "创建任务并只执行下载";
+    }
+
+    function parseTemplateGlossary() {
+      const raw = $("#template-glossary").value.trim();
+      if (!raw) return {};
+      let value;
+      try {
+        value = JSON.parse(raw);
+      } catch {
+        throw new Error("一键模板：术语表不是合法 JSON。");
+      }
+      if (
+        !value ||
+        Array.isArray(value) ||
+        typeof value !== "object" ||
+        Object.entries(value).some(
+          ([key, item]) => typeof key !== "string" || typeof item !== "string"
+        )
+      ) {
+        throw new Error("一键模板：术语表必须是“原词: 译词”的 JSON 对象。");
+      }
+      return value;
+    }
+
+    function notify(message, error = false) {
+      const toast = $("#toast");
+      toast.textContent = message;
+      toast.className = `toast${error ? " error" : ""}`;
+      toast.style.display = "block";
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => toast.style.display = "none", 4500);
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, options);
+      const type = response.headers.get("content-type") || "";
+      const body = type.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        throw new Error(body.detail || body || `请求失败：${response.status}`);
+      }
+      return body;
+    }
+
+    function statusLabel(job) {
+      if (job.running) return "执行中";
+      const labels = {
+        queued: "等待下载", downloaded: "已下载", extracted: "已抽取",
+        transcribed: "已识别", translated: "已翻译", synthesized: "已配音",
+        aligned: "已对齐", completed: "已完成", failed: "失败"
+      };
+      return labels[job.status] || job.status;
+    }
+
+    function renderJobs() {
+      const list = $("#job-list");
+      list.replaceChildren();
+      if (!state.jobs.length) {
+        const empty = document.createElement("div");
+        empty.className = "side-empty";
+        empty.textContent = "还没有任务。创建后，所有历史进度都会显示在这里。";
+        list.append(empty);
+        return;
+      }
+      state.jobs.forEach(job => {
+        const button = document.createElement("button");
+        button.className = `job-item${state.selected?.id === job.id ? " active" : ""}`;
+        const title = document.createElement("strong");
+        title.textContent = job.title || job.source || job.id;
+        const meta = document.createElement("span");
+        const status = document.createElement("em");
+        status.style.fontStyle = "normal";
+        status.textContent = statusLabel(job);
+        const id = document.createElement("code");
+        id.textContent = job.id.slice(0, 8);
+        meta.append(status, id);
+        button.append(title, meta);
+        button.addEventListener("click", () => selectJob(job.id));
+        list.append(button);
+      });
+    }
+
+    function fieldElement(definition, stepId, job) {
+      let initialValue = definition.value;
+      if (
+        definition.scope === "options" &&
+        job.options &&
+        job.options[definition.key] != null
+      ) {
+        initialValue = job.options[definition.key];
+      }
+      if (
+        definition.scope === "settings" &&
+        job.metadata?.runtime_settings?.[definition.key] != null
+      ) {
+        initialValue = job.metadata.runtime_settings[definition.key];
+      }
+      if (
+        definition.json &&
+        initialValue &&
+        typeof initialValue === "object"
+      ) {
+        initialValue = JSON.stringify(initialValue, null, 2);
+      }
+      if (definition.type === "checkbox") {
+        const wrap = document.createElement("div");
+        wrap.className = "check-field";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = Boolean(initialValue);
+        input.dataset.key = definition.key;
+        input.dataset.scope = definition.scope;
+        input.id = `${stepId}-${definition.key}`;
+        const text = document.createElement("div");
+        const label = document.createElement("label");
+        label.htmlFor = input.id;
+        label.textContent = definition.label;
+        const help = document.createElement("p");
+        help.className = "help";
+        help.textContent = definition.help;
+        text.append(label, help);
+        wrap.append(input, text);
+        return wrap;
+      }
+
+      const wrap = document.createElement("div");
+      wrap.className = `field${definition.wide ? " wide" : ""}`;
+      const label = document.createElement("label");
+      label.textContent = definition.label;
+      const id = `${stepId}-${definition.key}`;
+      label.htmlFor = id;
+      let input;
+      if (definition.type === "select") {
+        input = document.createElement("select");
+        definition.options.forEach(([value, text]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = text;
+          option.selected = value === String(initialValue);
+          input.append(option);
+        });
+      } else if (definition.type === "textarea") {
+        input = document.createElement("textarea");
+        input.value = initialValue || "";
+      } else {
+        input = document.createElement("input");
+        input.type = definition.type || "text";
+        input.value = initialValue || "";
+        if (definition.placeholder) input.placeholder = definition.placeholder;
+        ["min", "max", "step"].forEach(key => {
+          if (definition[key] != null) input.setAttribute(key, definition[key]);
+        });
+      }
+      input.id = id;
+      input.dataset.key = definition.key;
+      input.dataset.scope = definition.scope;
+      if (definition.json) input.dataset.json = "true";
+      const help = document.createElement("p");
+      help.className = "help";
+      help.textContent = definition.help;
+      wrap.append(label, input, help);
+      return wrap;
+    }
+
+    function renderSteps(job) {
+      const container = $("#steps");
+      container.replaceChildren();
+      const completed = new Set(job.completed_steps || []);
+      stepDefinitions.forEach((definition, index) => {
+        const previousComplete = index === 0 || completed.has(stepDefinitions[index - 1].id);
+        const isComplete = completed.has(definition.id);
+        const isCurrent = job.next_step === definition.id;
+        const card = document.createElement("article");
+        card.className = `step-card${isComplete ? " complete" : ""}${isCurrent ? " current open" : ""}`;
+
+        const summary = document.createElement("button");
+        summary.type = "button";
+        summary.className = "step-summary";
+        const number = document.createElement("span");
+        number.className = "step-number";
+        number.textContent = isComplete ? "✓" : String(index + 1);
+        const name = document.createElement("span");
+        name.className = "step-name";
+        const strong = document.createElement("strong");
+        strong.textContent = definition.name;
+        const description = document.createElement("span");
+        description.textContent = definition.description;
+        name.append(strong, description);
+        const stepState = document.createElement("span");
+        stepState.className = "step-state";
+        stepState.textContent = isComplete ? "已完成，可强制重跑" : isCurrent ? "下一步" : previousComplete ? "可执行" : "等待前一步";
+        summary.append(number, name, stepState);
+        summary.addEventListener("click", () => card.classList.toggle("open"));
+
+        const body = document.createElement("div");
+        body.className = "step-body";
+        const recommendation = document.createElement("p");
+        recommendation.className = "recommendation";
+        recommendation.textContent = definition.recommendation;
+        const grid = document.createElement("div");
+        grid.className = "grid";
+        definition.fields.forEach(
+          field => grid.append(fieldElement(field, definition.id, job))
+        );
+        if (definition.id === "transcribe") {
+          const backend = grid.querySelector("#transcribe-asr_backend");
+          const device = grid.querySelector("#transcribe-asr_device");
+          const compute = grid.querySelector("#transcribe-asr_compute_type");
+          const syncBackendFields = () => {
+            const usesMlx = backend.value === "mlx_whisper";
+            for (const input of [device, compute]) {
+              input.disabled = usesMlx;
+              input.closest(".field").style.opacity = usesMlx ? ".48" : "1";
+            }
+          };
+          backend.addEventListener("change", syncBackendFields);
+          syncBackendFields();
+        }
+        if (definition.id === "translate") {
+          const provider = grid.querySelector("#translate-translator_provider");
+          const baseUrl = grid.querySelector("#translate-translator_base_url");
+          const model = grid.querySelector("#translate-translator_model");
+          const apiKey = grid.querySelector("#translate-translator_api_key");
+          const codexBin = grid.querySelector("#translate-translator_codex_bin");
+          const codexModel = grid.querySelector("#translate-translator_codex_model");
+          const presets = {
+            ollama: ["http://127.0.0.1:11434/v1", "qwen3:8b"],
+            kimi: ["https://api.moonshot.cn/v1", "kimi-k2.6"],
+            minimax: ["https://api.minimaxi.com/v1", "MiniMax-M2.7"],
+            deepseek: ["https://api.deepseek.com", "deepseek-v4-flash"]
+          };
+          const setEnabled = (input, enabled) => {
+            input.disabled = !enabled;
+            input.closest(".field").style.opacity = enabled ? "1" : ".48";
+          };
+          const syncTranslatorFields = (applyPreset = false) => {
+            const selected = provider.value;
+            const usesCodex = selected === "codex_cli";
+            const isPassthrough = selected === "passthrough";
+            if (applyPreset && presets[selected]) {
+              [baseUrl.value, model.value] = presets[selected];
+            }
+            for (const input of [baseUrl, model, apiKey]) {
+              setEnabled(input, !usesCodex && !isPassthrough);
+            }
+            for (const input of [codexBin, codexModel]) {
+              setEnabled(input, usesCodex);
+            }
+          };
+          provider.addEventListener(
+            "change",
+            () => syncTranslatorFields(true)
+          );
+          syncTranslatorFields();
+        }
+
+        const command = document.createElement("div");
+        command.className = "command";
+        command.textContent = definition.command(job.id);
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const run = document.createElement("button");
+        run.type = "button";
+        run.className = "step-run";
+        run.textContent = isComplete ? "重新执行此步骤" : "执行此步骤";
+        run.disabled = job.running || !previousComplete;
+        const forceWrap = document.createElement("label");
+        forceWrap.className = "force-row";
+        const force = document.createElement("input");
+        force.type = "checkbox";
+        force.checked = isComplete;
+        const forceText = document.createTextNode("强制重跑并重置后续状态");
+        forceWrap.append(force, forceText);
+        run.addEventListener("click", () => runStep(definition, body, force.checked));
+        actions.append(run, forceWrap);
+
+        body.append(recommendation);
+        if (definition.fields.length) body.append(grid);
+        body.append(command, actions);
+        card.append(summary, body);
+        container.append(card);
+      });
+    }
+
+    function updateJob(job) {
+      state.selected = job;
+      $("#new-job-panel").hidden = true;
+      $("#empty-panel").hidden = true;
+      $("#job-panel").hidden = false;
+      $("#job-title").textContent = job.title || "等待获取媒体标题";
+      $("#job-id").textContent = `ID ${job.id}`;
+      $("#job-directory").textContent = `目录 ${job.directory_name}`;
+      $("#job-next").textContent = `下一步 ${job.next_step || "无"}`;
+      const badge = $("#job-status");
+      badge.textContent = statusLabel(job);
+      badge.className = `status-badge${job.status === "completed" ? " done" : ""}${job.status === "failed" ? " failed" : ""}`;
+      $("#job-message").textContent = job.stage_message || job.status;
+      $("#job-progress").textContent = `${job.progress || 0}%`;
+      $("#progress-bar").style.width = `${job.progress || 0}%`;
+      const error = $("#job-error");
+      error.textContent = job.error || "";
+      error.style.display = job.error ? "block" : "none";
+      renderSteps(job);
+      renderJobs();
+    }
+
+    async function refreshJobs() {
+      state.jobs = await api("/api/jobs");
+      renderJobs();
+      if (state.selected) {
+        const latest = state.jobs.find(job => job.id === state.selected.id);
+        if (latest) updateJob(latest);
+      }
+    }
+
+    async function selectJob(id) {
+      try {
+        const job = await api(`/api/jobs/${id}`);
+        updateJob(job);
+        localStorage.setItem("video-translator-job", id);
+        await Promise.all([loadLog(), loadTranscript()]);
+        startPolling();
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
+    function showNewJob() {
+      state.selected = null;
+      localStorage.removeItem("video-translator-job");
+      $("#job-panel").hidden = true;
+      $("#empty-panel").hidden = true;
+      $("#new-job-panel").hidden = false;
+      renderJobs();
+    }
+
+    function buildStepPayload(definition, body, force) {
+      const payload = {force, options: {}, settings: {}};
+      for (const input of body.querySelectorAll("[data-key]")) {
+        if (input.disabled) continue;
+        let value;
+        if (input.type === "checkbox") value = input.checked;
+        else if (input.type === "number") value = input.value === "" ? null : Number(input.value);
+        else value = input.value.trim();
+        if (value === "" || value == null) continue;
+        if (input.dataset.json === "true") {
+          try {
+            value = JSON.parse(value);
+          } catch {
+            throw new Error(`${definition.name}：术语表不是合法 JSON。`);
+          }
+        }
+        payload[input.dataset.scope][input.dataset.key] = value;
+      }
+      return payload;
+    }
+
+    async function runStep(definition, body, force) {
+      if (!state.selected) return;
+      try {
+        const payload = buildStepPayload(definition, body, force);
+        const job = await api(`/api/jobs/${state.selected.id}/steps/${definition.id}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        updateJob(job);
+        notify(`已提交：${definition.name}`);
+        startPolling(true);
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
+    async function loadLog() {
+      if (!state.selected) return;
+      try {
+        const log = await api(`/api/jobs/${state.selected.id}/log`);
+        const output = $("#log-output");
+        output.textContent = log || "还没有日志。";
+        output.scrollTop = output.scrollHeight;
+      } catch (error) {
+        $("#log-output").textContent = error.message;
+      }
+    }
+
+    function seconds(value) {
+      const total = Math.max(0, Number(value) || 0);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = (total % 60).toFixed(1).padStart(4, "0");
+      return hours ? `${hours}:${String(minutes).padStart(2,"0")}:${secs}` : `${minutes}:${secs}`;
+    }
+
+    async function loadTranscript() {
+      if (!state.selected) return;
+      const box = $("#transcript");
+      try {
+        const data = await api(`/api/jobs/${state.selected.id}/segments?limit=100`);
+        $("#transcript-title").textContent = `识别片段预览${data.total ? `（${data.total} 段）` : ""}`;
+        box.replaceChildren();
+        if (!data.items.length) {
+          const placeholder = document.createElement("div");
+          placeholder.className = "placeholder";
+          placeholder.textContent = "完成语音识别后，这里会显示带时间戳的文本。";
+          box.append(placeholder);
+          return;
+        }
+        data.items.forEach(item => {
+          const row = document.createElement("div");
+          row.className = "segment";
+          const time = document.createElement("time");
+          time.textContent = `${seconds(item.start)} → ${seconds(item.end)}`;
+          const text = document.createElement("div");
+          text.textContent = item.translated_text || item.source_text;
+          row.append(time, text);
+          box.append(row);
+        });
+      } catch (error) {
+        box.textContent = error.message;
+      }
+    }
+
+    async function pollOnce() {
+      if (!state.selected) return;
+      try {
+        const job = await api(`/api/jobs/${state.selected.id}`);
+        updateJob(job);
+        await loadLog();
+        if (job.artifacts?.segments) await loadTranscript();
+        await refreshJobs();
+        const desiredDelay = job.running ? 2200 : 15000;
+        if (desiredDelay !== state.pollDelay) startPolling();
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
+    function startPolling(immediate = false) {
+      clearInterval(state.timer);
+      if (immediate) setTimeout(pollOnce, 450);
+      state.pollDelay = state.selected?.running ? 2200 : 15000;
+      state.timer = setInterval(pollOnce, state.pollDelay);
+    }
+
+    $("#new-job-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const submit = $("#create-submit");
+      submit.disabled = true;
+      const sourceLanguage = $("#create-language").value.trim();
+      const cookies = $("#create-cookies").value;
+      const automated = $("#create-mode").value === "automated";
+      const templateProvider = $("#template-translator-provider").value;
+      if (
+        automated &&
+        ["kimi", "minimax", "deepseek"].includes(templateProvider) &&
+        !$("#template-translator-api-key").value.trim() &&
+        !$("#template-translator-api-key").dataset.secretRef
+      ) {
+        notify("这个云翻译模板需要填写 API Key。", true);
+        submit.disabled = false;
+        $("#automation-settings").open = true;
+        return;
+      }
+      let glossary = {};
+      try {
+        glossary = automated ? parseTemplateGlossary() : {};
+      } catch (error) {
+        notify(error.message, true);
+        submit.disabled = false;
+        return;
+      }
+      const payload = {
+        url: $("#source-url").value.trim(),
+        options: {
+          target_language: "简体中文",
+          source_language: sourceLanguage || null,
+          keep_original_audio: $("#create-original").checked,
+          duck_original_audio: automated
+            ? $("#template-duck-original").checked
+            : true,
+          burn_subtitles: $("#create-burn").checked,
+          glossary
+        },
+        settings: {
+          max_download_height: Number($("#create-height").value),
+          download_backend: $("#create-backend").value,
+          cookies_from_browser: cookies || null
+        }
+      };
+      if (automated) {
+        const provider = $("#template-translator-provider").value;
+        Object.assign(payload.settings, {
+          asr_backend: $("#template-asr-backend").value,
+          asr_model: $("#template-asr-model").value,
+          translator_provider: provider,
+          translator_timeout_seconds: 180,
+          translation_batch_size: Number(
+            $("#template-translation-batch-size").value
+          ),
+          tts_provider: $("#template-tts-provider").value,
+          tts_voice: $("#template-tts-voice").value.trim(),
+          tts_rate: $("#template-tts-rate").value.trim(),
+          tts_volume: $("#template-tts-volume").value.trim(),
+          tts_http_url: $("#template-http-tts-url").value.trim() || null,
+          cosyvoice_base_url: $("#template-cosyvoice-url").value.trim(),
+          max_tempo_factor: Number($("#template-max-tempo").value),
+          enable_demucs: $("#template-demucs").checked,
+        });
+        if (provider === "codex_cli") {
+          payload.settings.translator_codex_bin = "codex";
+          payload.settings.translator_codex_model =
+            $("#template-translator-model").value.trim() || null;
+        } else {
+          payload.settings.translator_base_url =
+            $("#template-translator-base-url").value.trim();
+          payload.settings.translator_model =
+            $("#template-translator-model").value.trim();
+          const directApiKey =
+            $("#template-translator-api-key").value.trim();
+          if (directApiKey) {
+            payload.settings.translator_api_key = directApiKey;
+          } else if (
+            $("#template-translator-api-key").dataset.secretRef
+          ) {
+            payload.translator_api_key_ref =
+              $("#template-translator-api-key").dataset.secretRef;
+          }
+        }
+      }
+      try {
+        const endpoint = automated
+          ? "/api/jobs/automated"
+          : "/api/jobs/staged";
+        const job = await api(endpoint, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        await refreshJobs();
+        updateJob(job);
+        localStorage.setItem("video-translator-job", job.id);
+        notify(
+          automated
+            ? "任务已创建，将按模板自动跑完 7 步。"
+            : "任务已创建，正在下载。"
+        );
+        startPolling(true);
+      } catch (error) {
+        notify(error.message, true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    $("#new-job-button").addEventListener("click", showNewJob);
+    $("#refresh-log").addEventListener("click", loadLog);
+    $("#refresh-transcript").addEventListener("click", loadTranscript);
+    $("#create-mode").addEventListener("change", syncCreateMode);
+    $("#template-translator-provider").addEventListener(
+      "change",
+      () => syncCreateTranslator(true)
+    );
+    $("#create-template").addEventListener("change", event => {
+      const name = event.target.value;
+      const template = name === "last"
+        ? readSavedAutomationTemplate()
+        : automationTemplates[name];
+      if (template) applyAutomationTemplate(template);
+      else {
+        event.target.value = "mac_codex";
+        applyAutomationTemplate(automationTemplates.mac_codex);
+        notify("还没有保存过模板，已恢复 Mac + Codex 推荐配置。", true);
+      }
+    });
+    $("#save-template").addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await saveAutomationTemplate(true);
+        $("#create-template").value = "last";
+      } catch (error) {
+        notify(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    async function boot() {
+      try {
+        const [health, jobs] = await Promise.all([api("/api/health"), api("/api/jobs")]);
+        $("#local-chip").title = health.data_directory;
+        state.jobs = jobs;
+        renderJobs();
+        const remembered = localStorage.getItem("video-translator-job");
+        if (remembered && jobs.some(job => job.id === remembered)) {
+          await selectJob(remembered);
+        } else if (jobs.length) {
+          $("#new-job-panel").hidden = true;
+          $("#empty-panel").hidden = false;
+        }
+      } catch (error) {
+        notify(`无法连接本地服务：${error.message}`, true);
+      }
+    }
+
+    const savedTemplate = readSavedAutomationTemplate();
+    $("#create-template").querySelector('option[value="last"]').disabled =
+      !savedTemplate;
+    applyAutomationTemplate(savedTemplate || automationTemplates.mac_codex);
+    $("#create-template").value = savedTemplate ? "last" : "mac_codex";
+    syncCreateMode();
+    boot();
+  </script>
+</body>
+</html>

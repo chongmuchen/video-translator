@@ -9,6 +9,13 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .translation_providers import (
+    DEFAULT_TRANSLATOR_BASE_URL,
+    DEFAULT_TRANSLATOR_MODEL,
+    TRANSLATION_PROVIDER_PRESETS,
+    TranslatorProvider,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,19 +52,20 @@ class Settings(BaseSettings):
     download_socket_timeout: float = 30
     download_http_chunk_size: int = 10 * 1024 * 1024
 
+    asr_backend: Literal["faster_whisper", "mlx_whisper"] = "faster_whisper"
     asr_model: str = "large-v3"
     asr_device: str = "auto"
     asr_compute_type: str = "auto"
     source_language: str | None = None
 
-    translator_provider: Literal["openai_compatible", "passthrough"] = (
-        "openai_compatible"
-    )
-    translator_base_url: str = "http://127.0.0.1:11434/v1"
-    translator_model: str = "qwen3:8b"
+    translator_provider: TranslatorProvider = "openai_compatible"
+    translator_base_url: str = DEFAULT_TRANSLATOR_BASE_URL
+    translator_model: str = DEFAULT_TRANSLATOR_MODEL
     translator_api_key: str | None = None
     translator_timeout_seconds: float = 180
     translation_batch_size: int = 12
+    translator_codex_bin: str = "codex"
+    translator_codex_model: str | None = None
 
     tts_provider: Literal["edge", "http", "cosyvoice"] = "edge"
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
@@ -93,6 +101,14 @@ class Settings(BaseSettings):
     def resolve_paths(self) -> "Settings":
         if not self.data_dir.is_absolute():
             self.data_dir = (PROJECT_ROOT / self.data_dir).resolve()
+        preset = TRANSLATION_PROVIDER_PRESETS.get(
+            self.translator_provider
+        )
+        if preset:
+            if self.translator_base_url == DEFAULT_TRANSLATOR_BASE_URL:
+                self.translator_base_url = preset["base_url"]
+            if self.translator_model == DEFAULT_TRANSLATOR_MODEL:
+                self.translator_model = preset["model"]
         return self
 
     @property

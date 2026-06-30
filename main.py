@@ -349,12 +349,9 @@ def command_status(args: argparse.Namespace) -> int:
     pipeline = StepwiseVideoTranslationPipeline(settings, store)
     job_ids = list(args.job_ids)
     if not job_ids:
-        manifests = sorted(
-            settings.jobs_dir.glob("*/manifest.json"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        job_ids = [path.parent.name for path in manifests[:20]]
+        job_ids = [
+            manifest.id for manifest in store.list(limit=20)
+        ]
     if not job_ids:
         print("还没有任务。")
         return 0

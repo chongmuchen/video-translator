@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
+import subprocess
+import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 
 import httpx
 
@@ -76,9 +80,6 @@ class SegmentTranslator:
                 segment.translated_text = segment.source_text
             return
 
-        if not self.settings.translator_base_url:
-            raise ConfigurationError("没有配置 VT_TRANSLATOR_BASE_URL。")
-
         glossary_text = (
             json.dumps(glossary, ensure_ascii=False)
             if glossary
@@ -109,6 +110,18 @@ class SegmentTranslator:
             "待翻译片段：\n"
             f"{json.dumps(payload_segments, ensure_ascii=False)}"
         )
+
+        if self.settings.translator_provider == "codex_cli":
+            content = self._translate_with_codex(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+            apply_translation_response(segments, content)
+            return
+
+        if not self.settings.translator_base_url:
+            raise ConfigurationError("没有配置 VT_TRANSLATOR_BASE_URL。")
+
         url = (
             self.settings.translator_base_url.rstrip("/")
             + "/chat/completions"
@@ -138,6 +151,101 @@ class SegmentTranslator:
             raise PipelineError(f"调用翻译服务失败：{exc}") from exc
         apply_translation_response(segments, str(content))
 
+    def _translate_with_codex(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        executable = shutil.which(self.settings.translator_codex_bin)
+        if not executable:
+            raise ConfigurationError(
+                "找不到 Codex CLI。请先确认 `codex --version` 可执行，"
+                "或配置 VT_TRANSLATOR_CODEX_BIN。"
+            )
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "text": {"type": "string"},
+                        },
+                        "required": ["id", "text"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["segments"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            f"{system_prompt}\n\n{user_prompt}\n\n"
+            "这是纯文本翻译任务。不要读取文件，不要执行命令或调用工具；"
+            "直接返回符合指定 JSON Schema 的最终答案。"
+        )
+
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="video-translator-codex-"
+            ) as temporary:
+                schema_path = Path(temporary) / "translation-schema.json"
+                schema_path.write_text(
+                    json.dumps(schema, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                command = [
+                    executable,
+                    "exec",
+                    "--ephemeral",
+                    "--ignore-user-config",
+                    "--ignore-rules",
+                    "--sandbox",
+                    "read-only",
+                    "--skip-git-repo-check",
+                    "--output-schema",
+                    str(schema_path),
+                    "--color",
+                    "never",
+                ]
+                if self.settings.translator_codex_model:
+                    command.extend(
+                        [
+                            "--model",
+                            self.settings.translator_codex_model,
+                        ]
+                    )
+                command.append("-")
+                result = subprocess.run(
+                    command,
+                    input=prompt,
+                    text=True,
+                    capture_output=True,
+                    timeout=self.settings.translator_timeout_seconds,
+                    cwd=temporary,
+                    check=False,
+                )
+        except subprocess.TimeoutExpired as exc:
+            raise PipelineError(
+                "Codex CLI 翻译超时。请调小每批片段数或提高超时时间。"
+            ) from exc
+        except OSError as exc:
+            raise PipelineError(f"启动 Codex CLI 失败：{exc}") from exc
+
+        if result.returncode != 0:
+            detail = result.stderr.strip()[-2000:] or "未知错误"
+            raise PipelineError(
+                f"Codex CLI 翻译失败（退出码 {result.returncode}）："
+                f"{detail}"
+            )
+        if not result.stdout.strip():
+            raise PipelineError("Codex CLI 没有返回翻译结果。")
+        return result.stdout
+
     def translate(
         self,
         segments: list[Segment],
@@ -160,4 +268,3 @@ class SegmentTranslator:
                 glossary=glossary,
             )
         return segments
-

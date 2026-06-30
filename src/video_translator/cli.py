@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,17 +36,37 @@ def doctor(settings: Settings) -> int:
         failed = True
         _print_check("FFmpeg", False, str(exc))
 
-    for package, label in (
-        ("yt_dlp", "yt-dlp"),
-        ("faster_whisper", "faster-whisper"),
-        ("edge_tts", "edge-tts"),
+    selected_asr_package = (
+        "mlx_whisper"
+        if settings.asr_backend == "mlx_whisper"
+        else "faster_whisper"
+    )
+    for package, label, required in (
+        ("yt_dlp", "yt-dlp", True),
+        (
+            "faster_whisper",
+            "faster-whisper",
+            selected_asr_package == "faster_whisper",
+        ),
+        (
+            "mlx_whisper",
+            "mlx-whisper",
+            selected_asr_package == "mlx_whisper",
+        ),
+        ("edge_tts", "edge-tts", True),
     ):
         available = importlib.util.find_spec(package) is not None
-        failed = failed or not available
+        failed = failed or (required and not available)
         _print_check(
             label,
-            available,
-            "已安装" if available else "未安装",
+            available or not required,
+            (
+                "已安装"
+                if available
+                else "未安装（当前未选择）"
+                if not required
+                else "未安装"
+            ),
         )
 
     deno = shutil.which("deno")
@@ -57,6 +78,46 @@ def doctor(settings: Settings) -> int:
     if settings.translator_provider == "passthrough":
         _print_check("翻译服务", False, "passthrough 仅用于测试，不会翻译")
         failed = True
+    elif settings.translator_provider == "codex_cli":
+        codex = shutil.which(settings.translator_codex_bin)
+        if codex:
+            try:
+                version = subprocess.run(
+                    [codex, "--version"],
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                login = subprocess.run(
+                    [codex, "login", "status"],
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                reachable = (
+                    version.returncode == 0 and login.returncode == 0
+                )
+                detail = "; ".join(
+                    item
+                    for item in (
+                        version.stdout.strip() or version.stderr.strip(),
+                        login.stdout.strip() or login.stderr.strip(),
+                    )
+                    if item
+                ) or codex
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                reachable = False
+                detail = str(exc)
+        else:
+            reachable = False
+            detail = (
+                f"找不到 {settings.translator_codex_bin}；"
+                "请安装并登录 Codex CLI"
+            )
+        failed = failed or not reachable
+        _print_check("Codex CLI 翻译", reachable, detail)
     else:
         models_url = (
             settings.translator_base_url.rstrip("/") + "/models"

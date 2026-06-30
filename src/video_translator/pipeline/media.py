@@ -143,6 +143,17 @@ def atempo_chain(factor: float) -> str:
     return ",".join(f"atempo={part:.6f}" for part in parts)
 
 
+def select_tempo_factor(
+    source_duration: float,
+    target_duration: float,
+    maximum: float,
+) -> float:
+    """Return 1x unless a clip needs bounded acceleration to fit."""
+
+    required = source_duration / max(target_duration, 0.05)
+    return 1.0 if required <= 1.02 else min(required, maximum)
+
+
 def normalize_tts_segments(
     segments: list[Segment],
     output_dir: Path,
@@ -161,9 +172,11 @@ def normalize_tts_segments(
         source_duration = probe_duration(input_path, media)
         target_duration = segment.duration
         required_tempo = source_duration / target_duration
-        tempo = 1.0
-        if required_tempo > 1.02:
-            tempo = min(required_tempo, settings.max_tempo_factor)
+        tempo = select_tempo_factor(
+            source_duration,
+            target_duration,
+            settings.max_tempo_factor,
+        )
         if required_tempo > settings.max_tempo_factor:
             logger.warning(
                 "片段 %s 的配音长 %.2fs、时间槽 %.2fs；达到最大加速后会裁尾。"
@@ -216,6 +229,83 @@ def _write_silence(
         count = min(remaining, 8192)
         output.writeframesraw(zero_chunk[: count * sample_width])
         remaining -= count
+
+
+def _write_control_signal(
+    output: wave.Wave_write,
+    frame_count: int,
+) -> None:
+    """Write an inaudible-to-output sidechain signal in bounded chunks."""
+
+    remaining = max(0, frame_count)
+    positive = int(12000).to_bytes(2, "little", signed=True)
+    negative = int(-12000).to_bytes(2, "little", signed=True)
+    signal_chunk = (positive + negative) * 4096
+    while remaining:
+        count = min(remaining, 8192)
+        output.writeframesraw(signal_chunk[: count * 2])
+        remaining -= count
+
+
+def write_duck_control(
+    segments: list[Segment],
+    output: Path,
+    *,
+    total_duration: float,
+    sample_rate: int,
+    lead_seconds: float = 0.08,
+    trail_seconds: float = 0.35,
+) -> Path:
+    """Create a sidechain control track active for full speech slots.
+
+    The translated speech may finish before the source-language subtitle slot.
+    Driving the compressor with this control track, rather than the actual dub
+    waveform, prevents the original voice from returning during that tail.
+    """
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    total_frames = max(0, math.ceil(total_duration * sample_rate))
+    raw_intervals = sorted(
+        (
+            max(0.0, segment.start - lead_seconds),
+            min(total_duration, segment.end + trail_seconds),
+        )
+        for segment in segments
+        if segment.end > 0 and segment.start < total_duration
+    )
+    intervals: list[tuple[float, float]] = []
+    for start, end in raw_intervals:
+        if end <= start:
+            continue
+        if intervals and start <= intervals[-1][1]:
+            previous_start, previous_end = intervals[-1]
+            intervals[-1] = (previous_start, max(previous_end, end))
+        else:
+            intervals.append((start, end))
+
+    cursor = 0
+    with wave.open(str(output), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(sample_rate)
+        for start, end in intervals:
+            start_frame = min(total_frames, round(start * sample_rate))
+            end_frame = min(total_frames, round(end * sample_rate))
+            if start_frame > cursor:
+                _write_silence(
+                    writer,
+                    start_frame - cursor,
+                    sample_width=2,
+                )
+            _write_control_signal(writer, max(0, end_frame - start_frame))
+            cursor = max(cursor, end_frame)
+        if cursor < total_frames:
+            _write_silence(
+                writer,
+                total_frames - cursor,
+                sample_width=2,
+            )
+    return output
 
 
 def compose_dub_timeline(
@@ -357,6 +447,7 @@ def mux_video(
     duck_original_audio: bool,
     burn_subtitles: bool,
     background_audio: Path | None,
+    duck_control_audio: Path | None,
     logger: logging.Logger,
 ) -> Path:
     """Create Chinese dubbed audio, optional original track, and subtitles."""
@@ -370,11 +461,18 @@ def mux_video(
         "-i",
         dub_audio,
     ]
+    next_input_index = 2
     background_index: int | None = None
     if background_audio:
-        background_index = 2
+        background_index = next_input_index
+        next_input_index += 1
         args.extend(["-i", background_audio])
-    subtitle_index = 3 if background_audio else 2
+    duck_control_index: int | None = None
+    if duck_control_audio:
+        duck_control_index = next_input_index
+        next_input_index += 1
+        args.extend(["-i", duck_control_audio])
+    subtitle_index = next_input_index
     args.extend(["-i", subtitles])
 
     mix_source = (
@@ -385,11 +483,16 @@ def mux_video(
     can_mix = source_has_audio or background_index is not None
     if can_mix:
         if duck_original_audio:
+            sidechain_source = (
+                f"{duck_control_index}:a:0"
+                if duck_control_index is not None
+                else "1:a:0"
+            )
             filter_complex = (
-                f"[{mix_source}]volume=0.72[original];"
-                "[original][1:a:0]"
-                "sidechaincompress=threshold=0.025:ratio=8:"
-                "attack=20:release=500[ducked];"
+                f"[{mix_source}]volume=0.62[original];"
+                f"[original][{sidechain_source}]"
+                "sidechaincompress=threshold=0.010:ratio=20:"
+                "attack=5:release=250:detection=peak:link=maximum[ducked];"
                 "[ducked][1:a:0]"
                 "amix=inputs=2:duration=longest:weights='1 1':normalize=0,"
                 "loudnorm=I=-16:LRA=11:TP=-1.5[dubbed]"

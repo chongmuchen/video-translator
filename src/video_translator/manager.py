@@ -28,12 +28,25 @@ class JobManager:
         self,
         source: str,
         options: PipelineOptions,
+        *,
+        settings: Settings | None = None,
+        metadata: dict | None = None,
     ) -> JobManifest:
         manifest = self.store.create(source, options)
-        future = self.executor.submit(self.pipeline.run, manifest)
+        if metadata:
+            manifest.metadata.update(metadata)
+            self.store.save(manifest)
+        pipeline = (
+            VideoTranslationPipeline(settings, self.store)
+            if settings is not None
+            else self.pipeline
+        )
+        future = self.executor.submit(pipeline.run, manifest)
         with self._lock:
             self._futures[manifest.id] = future
-        future.add_done_callback(lambda _: self._forget(manifest.id))
+        future.add_done_callback(
+            lambda done: self._forget(manifest.id, done)
+        )
         return manifest
 
     def create(
@@ -69,7 +82,9 @@ class JobManager:
         )
         with self._lock:
             self._futures[job_id] = future
-        future.add_done_callback(lambda _: self._forget(job_id))
+        future.add_done_callback(
+            lambda done: self._forget(job_id, done)
+        )
         return manifest
 
     def is_running(self, job_id: str) -> bool:
@@ -85,9 +100,14 @@ class JobManager:
         manifest = self.store.create(source, options)
         return self.pipeline.run(manifest)
 
-    def _forget(self, job_id: str) -> None:
+    def _forget(
+        self,
+        job_id: str,
+        future: Future[JobManifest],
+    ) -> None:
         with self._lock:
-            self._futures.pop(job_id, None)
+            if self._futures.get(job_id) is future:
+                self._futures.pop(job_id, None)
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=False)

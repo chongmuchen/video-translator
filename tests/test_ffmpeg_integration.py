@@ -2,7 +2,12 @@ import logging
 from pathlib import Path
 
 from video_translator.commands import run_command
-from video_translator.pipeline.media import mux_video, probe_media
+from video_translator.models import Segment
+from video_translator.pipeline.media import (
+    mux_video,
+    probe_media,
+    write_duck_control,
+)
 from video_translator.runtime import resolve_media_binaries
 from video_translator.settings import Settings
 
@@ -16,6 +21,7 @@ def test_mux_produces_dub_original_and_subtitle_tracks(
     dub = tmp_path / "dub.wav"
     subtitles = tmp_path / "zh.srt"
     output = tmp_path / "output.mp4"
+    duck_control = tmp_path / "duck-control.wav"
 
     run_command(
         [
@@ -58,6 +64,12 @@ def test_mux_produces_dub_original_and_subtitle_tracks(
         "1\n00:00:00,200 --> 00:00:01,500\n测试字幕\n",
         encoding="utf-8",
     )
+    write_duck_control(
+        [Segment(index=0, start=0.2, end=1.5, source_text="hello")],
+        duck_control,
+        total_duration=2.0,
+        sample_rate=24000,
+    )
 
     mux_video(
         source,
@@ -70,10 +82,10 @@ def test_mux_produces_dub_original_and_subtitle_tracks(
         duck_original_audio=True,
         burn_subtitles=False,
         background_audio=None,
+        duck_control_audio=duck_control,
         logger=logging.getLogger("integration"),
     )
     streams = probe_media(output, media)["streams"]
     assert sum(item["codec_type"] == "video" for item in streams) == 1
     assert sum(item["codec_type"] == "audio" for item in streams) == 2
     assert sum(item["codec_type"] == "subtitle" for item in streams) == 1
-
