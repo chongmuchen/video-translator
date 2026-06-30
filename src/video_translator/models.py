@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +64,88 @@ class PipelineOptions(BaseModel):
 class JobCreateRequest(BaseModel):
     url: str
     options: PipelineOptions = Field(default_factory=PipelineOptions)
+
+
+class PipelineOptionsUpdate(BaseModel):
+    target_language: str | None = None
+    source_language: str | None = None
+    keep_original_audio: bool | None = None
+    duck_original_audio: bool | None = None
+    burn_subtitles: bool | None = None
+    glossary: dict[str, str] | None = None
+
+
+class RuntimeSettingsUpdate(BaseModel):
+    max_download_height: int | None = Field(default=None, ge=144, le=4320)
+    cookies_from_browser: str | None = None
+    download_backend: Literal["auto", "native", "curl"] | None = None
+    download_proxy: str | None = None
+    download_impersonate: str | None = None
+
+    asr_model: str | None = None
+    asr_device: Literal["auto", "cpu", "cuda"] | None = None
+    asr_compute_type: Literal[
+        "auto",
+        "int8",
+        "int8_float32",
+        "int8_float16",
+        "float16",
+        "float32",
+    ] | None = None
+
+    translator_provider: Literal[
+        "openai_compatible",
+        "passthrough",
+    ] | None = None
+    translator_base_url: str | None = None
+    translator_model: str | None = None
+    translator_api_key: str | None = None
+    translator_timeout_seconds: float | None = Field(
+        default=None,
+        ge=1,
+        le=3600,
+    )
+    translation_batch_size: int | None = Field(default=None, ge=1, le=100)
+
+    tts_provider: Literal["edge", "http", "cosyvoice"] | None = None
+    tts_voice: str | None = None
+    tts_rate: str | None = None
+    tts_volume: str | None = None
+    tts_http_url: str | None = None
+    tts_http_api_key: str | None = None
+    cosyvoice_base_url: str | None = None
+    cosyvoice_mode: Literal[
+        "sft",
+        "zero_shot",
+        "cross_lingual",
+        "instruct",
+        "instruct2",
+    ] | None = None
+    cosyvoice_sample_rate: int | None = Field(
+        default=None,
+        ge=8000,
+        le=96000,
+    )
+
+    dub_sample_rate: int | None = Field(default=None, ge=8000, le=96000)
+    max_tempo_factor: float | None = Field(default=None, ge=1.0, le=4.0)
+    enable_demucs: bool | None = None
+
+
+class StagedJobCreateRequest(JobCreateRequest):
+    settings: RuntimeSettingsUpdate = Field(
+        default_factory=RuntimeSettingsUpdate
+    )
+
+
+class StepRunRequest(BaseModel):
+    force: bool = False
+    options: PipelineOptionsUpdate = Field(
+        default_factory=PipelineOptionsUpdate
+    )
+    settings: RuntimeSettingsUpdate = Field(
+        default_factory=RuntimeSettingsUpdate
+    )
 
 
 class JobManifest(BaseModel):

@@ -53,6 +53,12 @@ download → extract → transcribe → translate → synthesize → align → m
 .venv/bin/python main.py step JOB_ID transcribe
 ```
 
+常用步骤也提供了 Makefile 包装。例如，下载完成后抽取识别音频：
+
+```bash
+make extract JOB_ID='下载命令返回的任务ID'
+```
+
 查看状态：
 
 ```bash
@@ -112,7 +118,7 @@ cp test-videos.example.txt test-videos.txt
 | 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
 | 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
 
-当前自动化测试基线：**39 项测试通过**。
+当前自动化测试基线：**41 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -120,7 +126,7 @@ cp test-videos.example.txt test-videos.txt
 
 ```text
 data/
-├── jobs/{job_id}/
+├── jobs/{title}--{job_id}/
 │   ├── manifest.json       # 当前状态、进度、错误和文件路径
 │   ├── pipeline.log        # FFmpeg 和各阶段日志
 │   ├── source.mp4          # 下载或复制的原视频
@@ -136,6 +142,10 @@ data/
 └── outputs/
     └── {title}-{job_id}.mp4
 ```
+
+远程媒体的标题要在读取视频信息后才能确定，因此任务会先用 ID 创建临时目录；
+下载成功后自动改为 `{视频标题}--{完整任务ID}`。后续命令仍只需传任务 ID，
+同名视频也不会互相覆盖；旧版的纯 ID 目录仍然兼容。
 
 任务状态依次为：
 
@@ -647,7 +657,7 @@ cp test-videos.example.txt test-videos.txt
 状态:       downloaded
 已完成步骤: download
 下一步:     extract
-视频:       .../data/jobs/{job_id}/source.mp4
+视频:       .../data/jobs/{title}--{job_id}/source.mp4
 ```
 
 逐个检查：
@@ -659,10 +669,27 @@ cp test-videos.example.txt test-videos.txt
 确认下载没问题后，只提取音频：
 
 ```bash
-.venv/bin/python main.py next JOB_ID
+make extract JOB_ID='JOB_ID'
 ```
 
-预期状态变为 `extracted`，并生成 `speech-16k.wav`。
+它等价于：
+
+```bash
+.venv/bin/python main.py step JOB_ID extract
+```
+
+预期状态变为 `extracted`，并在任务目录生成供 Whisper 使用的 16 kHz
+单声道 PCM 文件：
+
+```text
+data/jobs/视频标题--JOB_ID/speech-16k.wav
+```
+
+再次执行时，已完成的抽取步骤会被安全跳过。如果源文件变化、确实需要重新抽取：
+
+```bash
+make extract JOB_ID='JOB_ID' EXTRACT_ARGS='--force'
+```
 
 如果日志出现：
 
@@ -876,6 +903,149 @@ work/podcasts/{节目名称}/
 
 .venv/bin/python main.py next JOB_ID
 ```
+
+对于前面的 Apple Podcasts 单集链接，可以完整地分两步测试：
+
+```bash
+# 第一步：下载；终端会打印任务 ID
+make download-one \
+  URL='https://podcasts.apple.com/cn/podcast/relentless-geekery/id1519329964?i=1000745497980'
+
+# 第二步：把上一条命令打印的任务 ID 填到这里
+make extract JOB_ID='JOB_ID'
+```
+
+成功后应看到：
+
+```text
+状态:       extracted
+已完成步骤: download, extract
+下一步:     transcribe
+识别音频:   .../data/jobs/Episode-233--JOB_ID/speech-16k.wav
+```
+
+### 语音识别与时间戳
+
+抽取完成后，使用 faster-whisper 识别。首次验证建议使用 `small`，英文节目明确
+指定 `SOURCE_LANGUAGE=en` 可以减少语言检测偏差：
+
+```bash
+make transcribe \
+  JOB_ID='JOB_ID' \
+  ASR_MODEL=small \
+  SOURCE_LANGUAGE=en
+```
+
+这条命令的完整形式是：
+
+```bash
+make transcribe \
+  JOB_ID='任务ID' \
+  ASR_MODEL=small \
+  SOURCE_LANGUAGE=en \
+  ASR_DEVICE=auto \
+  ASR_COMPUTE_TYPE=auto \
+  TRANSCRIBE_ARGS=''
+```
+
+参数说明：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `JOB_ID` | 无，必填 | 下载步骤返回的 32 位任务 ID。这里填写任务 ID，不是带标题的目录名。程序会用 ID 自动找到 `视频标题--ID` 目录。 |
+| `ASR_MODEL` | `small` | 使用的 Whisper 模型。模型越大通常越准确，但下载、内存占用和识别时间也越大。 |
+| `SOURCE_LANGUAGE` | 空 | 原音频语言代码。`en` 是英语、`zh` 是中文、`ja` 是日语、`ko` 是韩语。留空时自动检测。它不是目标翻译语言。 |
+| `ASR_DEVICE` | `auto` | 推理设备。`auto` 会在存在 NVIDIA CUDA 时选择 `cuda`，否则选择 `cpu`。也可以明确传 `cpu` 或 `cuda`。当前不支持 `mps`。 |
+| `ASR_COMPUTE_TYPE` | `auto` | 模型计算精度。本项目的 `auto` 在 CPU 上选择 `int8`，在 CUDA 上选择 `float16`。 |
+| `TRANSCRIBE_ARGS` | 空 | 传给分步执行器的附加参数。当前最常用的是 `--force`，用于重新执行已经完成的识别步骤。 |
+
+常用模型：
+
+| 模型 | 适用场景 | 取舍 |
+|---|---|---|
+| `tiny` / `base` | 检查安装、模型下载和命令是否正常 | 最快，但不适合正式字幕 |
+| `small` | 首次识别长音频，支持多语言 | 速度、内存与准确率比较平衡 |
+| `small.en` | 只包含英语的节目 | 英语专用；不要用于多语言音频 |
+| `medium` | 对准确率要求更高 | 比 `small` 更慢、更占内存 |
+| `large-v3` | 正式成片、优先保证识别质量 | 下载较大，CPU 识别耗时最长 |
+| `turbo` | 希望接近大模型质量但提高速度 | 比 `large-v3` 快，准确率可能略有下降 |
+
+项目当前使用的几个内部参数不需要在 Make 命令中填写：
+
+| 内部参数 | 当前值 | 作用 |
+|---|---:|---|
+| `vad_filter` | `true` | 使用 Silero VAD 跳过静音和没有人声的区域。 |
+| `word_timestamps` | `true` | 让 Whisper 计算词级时间对齐；当前输出再整理为片段级起止时间。 |
+| `condition_on_previous_text` | `true` | 识别后续语音时参考前文，改善连续讲话的上下文。 |
+| `max_gap` | `0.45` 秒 | 两个短片段间隔不超过该值时，允许合并。 |
+| `max_duration` | `12` 秒 | 合并后的翻译片段最长持续时间。 |
+| `max_chars` | `180` 字符 | 合并后原文的最大字符数。 |
+
+第一次运行会下载对应 Whisper 模型。Apple Silicon 使用 CPU `int8`；长音频
+需要等待一段时间，进度和错误记录在任务目录的 `pipeline.log`。
+
+当前这台 Apple Silicon 机器可以明确写成：
+
+```bash
+make transcribe \
+  JOB_ID='6320d1982dec44f185f58977ee841f9a' \
+  ASR_MODEL=small.en \
+  SOURCE_LANGUAGE=en \
+  ASR_DEVICE=cpu \
+  ASR_COMPUTE_TYPE=int8
+```
+
+识别过程中可以在另一个终端查看日志：
+
+```bash
+tail -f \
+  data/jobs/*--6320d1982dec44f185f58977ee841f9a/pipeline.log
+```
+
+识别结果保存在：
+
+```text
+data/jobs/视频标题--JOB_ID/segments.json
+```
+
+每段包含以秒为单位的开始和结束时间：
+
+```json
+[
+  {
+    "index": 0,
+    "start": 0.52,
+    "end": 4.87,
+    "source_text": "Welcome to the show.",
+    "translated_text": null
+  }
+]
+```
+
+程序启用了 VAD 静音过滤和 Whisper 词级时间戳，再将过短片段合并成最长约
+12 秒的翻译单元；最终写入的是适合翻译、字幕和配音对齐的片段级时间戳。
+
+查看前 5 个识别片段：
+
+```bash
+jq '.[0:5] | map({index, start, end, source_text})' \
+  data/jobs/*--JOB_ID/segments.json
+```
+
+成功后应显示 `状态: transcribed`、`下一步: translate`。提高正式成片质量时，
+可以强制使用 `large-v3` 重新识别：
+
+```bash
+make transcribe \
+  JOB_ID='JOB_ID' \
+  ASR_MODEL=large-v3 \
+  SOURCE_LANGUAGE=en \
+  TRANSCRIBE_ARGS='--force'
+```
+
+不加 `--force` 时，已完成的识别步骤会被跳过。使用 `--force` 会重置
+`transcribe` 以及翻译、配音、对齐和封装等后续步骤的任务状态；后续步骤需要
+重新执行。
 
 当前纯音频已经支持：
 

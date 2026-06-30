@@ -312,6 +312,23 @@ def command_step(args: argparse.Namespace, *, next_only: bool = False) -> int:
     store = JobStore(settings)
     pipeline = StepwiseVideoTranslationPipeline(settings, store)
     manifest = store.get(args.job_id)
+    option_updates = {}
+    for name in (
+        "source_language",
+        "target_language",
+        "keep_original_audio",
+        "duck_original_audio",
+        "burn_subtitles",
+    ):
+        value = getattr(args, name, None)
+        if value is not None:
+            option_updates[name] = value
+    glossary_path = getattr(args, "glossary", None)
+    if glossary_path:
+        option_updates["glossary"] = load_glossary(glossary_path)
+    if option_updates:
+        manifest.options = manifest.options.model_copy(update=option_updates)
+        store.save(manifest)
     try:
         if next_only:
             pipeline.run_next(manifest)
@@ -377,6 +394,27 @@ def add_pipeline_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-original-audio", action="store_true")
     parser.add_argument("--burn-subtitles", action="store_true")
     add_download_options(parser)
+
+
+def add_job_option_overrides(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--source-language", help="原音频语言，如 en、ja")
+    parser.add_argument("--target-language", help="翻译目标语言，如 简体中文")
+    parser.add_argument("--glossary", help="JSON 术语表")
+    parser.add_argument(
+        "--keep-original-audio",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.add_argument(
+        "--duck-original-audio",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.add_argument(
+        "--burn-subtitles",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -455,12 +493,14 @@ def build_parser() -> argparse.ArgumentParser:
     next_parser = subparsers.add_parser("next", help="只执行下一个未完成步骤")
     next_parser.add_argument("job_id")
     add_download_options(next_parser)
+    add_job_option_overrides(next_parser)
 
     step = subparsers.add_parser("step", help="执行指定步骤")
     step.add_argument("job_id")
     step.add_argument("step", choices=[item.value for item in STEP_ORDER])
     step.add_argument("--force", action="store_true", help="强制重跑并使后续步骤失效")
     add_download_options(step)
+    add_job_option_overrides(step)
 
     status = subparsers.add_parser("status", help="显示一个或最近的任务状态")
     status.add_argument("job_ids", nargs="*")

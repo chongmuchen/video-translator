@@ -16,6 +16,18 @@ from .settings import Settings
 JOB_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 
 
+def safe_job_title(title: str) -> str:
+    """Return a readable, filesystem-safe title for a job directory."""
+
+    cleaned = re.sub(
+        r"[^\w\u4e00-\u9fff.-]+",
+        "-",
+        title,
+        flags=re.UNICODE,
+    )
+    return cleaned.strip("-._")[:60] or "untitled"
+
+
 class JobStore:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -25,7 +37,13 @@ class JobStore:
     def job_dir(self, job_id: str) -> Path:
         if not JOB_ID_PATTERN.fullmatch(job_id):
             raise PipelineError("任务 ID 无效。")
-        return self.settings.jobs_dir / job_id
+        legacy = self.settings.jobs_dir / job_id
+        if legacy.exists():
+            return legacy
+        matches = list(self.settings.jobs_dir.glob(f"*--{job_id}"))
+        if len(matches) > 1:
+            raise PipelineError(f"任务 ID 对应多个目录：{job_id}")
+        return matches[0] if matches else legacy
 
     def manifest_path(self, job_id: str) -> Path:
         return self.job_dir(job_id) / "manifest.json"
@@ -59,6 +77,45 @@ class JobStore:
             temporary.replace(path)
             return manifest
 
+    def add_title_to_job_dir(
+        self,
+        manifest: JobManifest,
+        title: str,
+    ) -> Path:
+        """Rename a job directory after its media title becomes known."""
+
+        with self._lock:
+            current = self.job_dir(manifest.id)
+            target = self.settings.jobs_dir / (
+                f"{safe_job_title(title)}--{manifest.id}"
+            )
+            if current == target:
+                return target
+            if target.exists():
+                raise PipelineError(f"目标任务目录已经存在：{target}")
+            current.rename(target)
+
+            for field in (
+                "source_path",
+                "audio_path",
+                "subtitle_path",
+                "dub_audio_path",
+                "output_path",
+                "segments_path",
+            ):
+                value = getattr(manifest, field)
+                if not value:
+                    continue
+                path = Path(value)
+                try:
+                    relative = path.relative_to(current)
+                except ValueError:
+                    continue
+                setattr(manifest, field, str(target / relative))
+
+            self.save(manifest)
+            return target
+
     def get(self, job_id: str) -> JobManifest:
         path = self.manifest_path(job_id)
         if not path.is_file():
@@ -67,6 +124,26 @@ class JobStore:
             return JobManifest.model_validate_json(
                 path.read_text(encoding="utf-8")
             )
+
+    def list(self, *, limit: int = 100) -> list[JobManifest]:
+        paths = sorted(
+            self.settings.jobs_dir.glob("*/manifest.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        manifests: list[JobManifest] = []
+        for path in paths:
+            try:
+                manifests.append(
+                    JobManifest.model_validate_json(
+                        path.read_text(encoding="utf-8")
+                    )
+                )
+            except (OSError, ValueError):
+                continue
+            if len(manifests) >= limit:
+                break
+        return manifests
 
     def set_stage(
         self,
@@ -102,4 +179,3 @@ class JobStore:
         manifest.segments_path = str(path)
         self.save(manifest)
         return path
-

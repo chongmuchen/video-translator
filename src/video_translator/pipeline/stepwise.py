@@ -355,7 +355,7 @@ class StepwiseVideoTranslationPipeline:
         manifest.metadata["media_kind"] = (
             "video" if has_video_stream(acquired.path, media) else "audio"
         )
-        self.store.save(manifest)
+        self.store.add_title_to_job_dir(manifest, acquired.title)
 
     def _step_extract(
         self,
