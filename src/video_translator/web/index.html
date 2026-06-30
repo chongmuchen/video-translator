@@ -90,6 +90,25 @@
     }
     .new-button:hover { background: rgba(255,255,255,.12); }
     .new-button + .new-button { margin-top: 8px; }
+    .history-filter {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+      margin: 0 0 12px;
+    }
+    .history-filter button {
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 999px;
+      padding: 7px 9px;
+      background: rgba(255,255,255,.05);
+      color: #b7c8bf;
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .history-filter button.active {
+      background: #f5f3ec;
+      color: #17261f;
+    }
     .job-list { display: grid; gap: 8px; }
     .job-item {
       width: 100%;
@@ -120,6 +139,12 @@
       margin-top: 7px;
       color: #9eb0a7;
       font-size: 11px;
+    }
+    .job-type {
+      display: inline-block;
+      margin-right: 6px;
+      color: #f0c4af;
+      font-weight: 850;
     }
     .side-empty {
       padding: 15px 10px;
@@ -503,6 +528,10 @@
       padding: 14px;
       background: #fbfaf6;
     }
+    .book-card.active {
+      border-color: var(--orange);
+      box-shadow: 0 8px 24px rgba(216,107,63,.12);
+    }
     .book-card strong { display: block; margin-bottom: 5px; }
     .book-card p { margin: 0; color: var(--muted); font-size: 11px; }
     .book-card .actions { margin-top: 12px; }
@@ -553,6 +582,12 @@
       <button class="new-button" id="new-job-button">＋ 新建本地任务</button>
       <button class="new-button" id="book-button">＋ 翻译 PDF / EPUB</button>
       <div class="side-title">历史任务</div>
+      <div class="history-filter" id="history-filter">
+        <button class="active" type="button" data-filter="all">全部</button>
+        <button type="button" data-filter="video">视频</button>
+        <button type="button" data-filter="podcast">播客/音频</button>
+        <button type="button" data-filter="book">书籍</button>
+      </div>
       <div class="job-list" id="job-list"></div>
     </aside>
 
@@ -1016,6 +1051,8 @@
       jobs: [],
       books: [],
       selected: null,
+      selectedKind: null,
+      historyFilter: "all",
       timer: null,
       pollDelay: null,
     };
@@ -1295,30 +1332,107 @@
       return labels[job.status] || job.status;
     }
 
+    function classifyJob(job) {
+      if (
+        job.metadata?.media_kind === "audio" ||
+        job.metadata?.extractor === "ApplePodcasts" ||
+        (job.source || "").includes("podcasts.apple.com")
+      ) {
+        return "podcast";
+      }
+      return "video";
+    }
+
+    function historyKindLabel(kind) {
+      return {
+        video: "视频",
+        podcast: "播客",
+        book: "书籍",
+      }[kind] || kind;
+    }
+
+    function historyItems() {
+      const items = [
+        ...state.jobs.map(job => {
+          const kind = classifyJob(job);
+          return {
+            id: job.id,
+            kind,
+            title: job.title || "等待获取媒体标题",
+            status: statusLabel(job),
+            updatedAt: job.updated_at || job.created_at,
+            raw: job,
+          };
+        }),
+        ...state.books.map(book => ({
+          id: book.id,
+          kind: "book",
+          title: book.title || "未命名书籍",
+          status: bookStatus(book),
+          updatedAt: book.updated_at || book.created_at,
+          raw: book,
+        })),
+      ];
+      return items
+        .filter(
+          item => state.historyFilter === "all" ||
+            item.kind === state.historyFilter
+        )
+        .sort(
+          (left, right) =>
+            Date.parse(right.updatedAt || 0) -
+            Date.parse(left.updatedAt || 0)
+        );
+    }
+
     function renderJobs() {
       const list = $("#job-list");
       list.replaceChildren();
-      if (!state.jobs.length) {
+      for (const button of $("#history-filter").querySelectorAll("button")) {
+        button.classList.toggle(
+          "active",
+          button.dataset.filter === state.historyFilter
+        );
+      }
+      const items = historyItems();
+      if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "side-empty";
-        empty.textContent = "还没有任务。创建后，所有历史进度都会显示在这里。";
+        empty.textContent =
+          state.historyFilter === "all"
+            ? "还没有任务。创建后，所有历史进度都会显示在这里。"
+            : "当前筛选下没有历史任务。";
         list.append(empty);
         return;
       }
-      state.jobs.forEach(job => {
+      items.forEach(item => {
         const button = document.createElement("button");
-        button.className = `job-item${state.selected?.id === job.id ? " active" : ""}`;
+        button.className =
+          `job-item${
+            state.selected?.id === item.id &&
+            state.selectedKind === item.kind
+              ? " active"
+              : ""
+          }`;
         const title = document.createElement("strong");
-        title.textContent = job.title || "等待获取媒体标题";
+        title.textContent = item.title;
         const meta = document.createElement("span");
         const status = document.createElement("em");
         status.style.fontStyle = "normal";
-        status.textContent = statusLabel(job);
+        const type = document.createElement("b");
+        type.className = "job-type";
+        type.textContent = historyKindLabel(item.kind);
+        status.append(type, document.createTextNode(item.status));
         const id = document.createElement("code");
-        id.textContent = job.id.slice(0, 8);
+        id.textContent = item.id.slice(0, 8);
         meta.append(status, id);
         button.append(title, meta);
-        button.addEventListener("click", () => selectJob(job.id));
+        button.addEventListener(
+          "click",
+          () => item.kind === "book"
+            ? selectBook(item.id)
+            : selectJob(item.id)
+        );
         list.append(button);
       });
     }
@@ -1576,6 +1690,7 @@
 
     function updateJob(job) {
       state.selected = job;
+      state.selectedKind = classifyJob(job);
       $("#new-job-panel").hidden = true;
       $("#book-panel").hidden = true;
       $("#empty-panel").hidden = true;
@@ -1598,10 +1713,21 @@
       renderJobs();
     }
 
+    function updateBook(book) {
+      state.selected = book;
+      state.selectedKind = "book";
+      $("#job-panel").hidden = true;
+      $("#new-job-panel").hidden = true;
+      $("#empty-panel").hidden = true;
+      $("#book-panel").hidden = false;
+      renderBooks();
+      renderJobs();
+    }
+
     async function refreshJobs() {
       state.jobs = await api("/api/jobs");
       renderJobs();
-      if (state.selected) {
+      if (state.selected && state.selectedKind !== "book") {
         const latest = state.jobs.find(job => job.id === state.selected.id);
         if (latest) updateJob(latest);
       }
@@ -1612,6 +1738,7 @@
         const job = await api(`/api/jobs/${id}`);
         updateJob(job);
         localStorage.setItem("video-translator-job", id);
+        localStorage.setItem("video-translator-history-kind", classifyJob(job));
         await Promise.all([loadLog(), loadTranscript()]);
         startPolling();
       } catch (error) {
@@ -1619,9 +1746,24 @@
       }
     }
 
+    async function selectBook(id) {
+      try {
+        const book = await api(`/api/books/${id}`);
+        updateBook(book);
+        localStorage.setItem("video-translator-job", id);
+        localStorage.setItem("video-translator-history-kind", "book");
+        await refreshBooks();
+        startPolling(true);
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
     function showNewJob() {
       state.selected = null;
+      state.selectedKind = null;
       localStorage.removeItem("video-translator-job");
+      localStorage.removeItem("video-translator-history-kind");
       $("#job-panel").hidden = true;
       $("#book-panel").hidden = true;
       $("#empty-panel").hidden = true;
@@ -1631,7 +1773,9 @@
 
     function showBooks() {
       state.selected = null;
+      state.selectedKind = null;
       localStorage.removeItem("video-translator-job");
+      localStorage.removeItem("video-translator-history-kind");
       $("#job-panel").hidden = true;
       $("#new-job-panel").hidden = true;
       $("#empty-panel").hidden = true;
@@ -1711,7 +1855,13 @@
       }
       for (const book of state.books) {
         const card = document.createElement("article");
-        card.className = "book-card";
+        card.className =
+          `book-card${
+            state.selectedKind === "book" &&
+            state.selected?.id === book.id
+              ? " active"
+              : ""
+          }`;
         const title = document.createElement("strong");
         title.textContent = book.title;
         const meta = document.createElement("p");
@@ -1766,7 +1916,14 @@
     async function refreshBooks() {
       try {
         state.books = await api("/api/books");
+        if (state.selectedKind === "book" && state.selected) {
+          const latest = state.books.find(
+            book => book.id === state.selected.id
+          );
+          if (latest) state.selected = latest;
+        }
         renderBooks();
+        renderJobs();
       } catch (error) {
         notify(error.message, true);
       }
@@ -1781,6 +1938,9 @@
         });
         notify("书籍步骤已提交。");
         await refreshBooks();
+        if (state.selectedKind === "book" && state.selected?.id === bookId) {
+          startPolling(true);
+        }
       } catch (error) {
         notify(error.message, true);
       }
@@ -1876,6 +2036,14 @@
     async function pollOnce() {
       if (!state.selected) return;
       try {
+        if (state.selectedKind === "book") {
+          const book = await api(`/api/books/${state.selected.id}`);
+          updateBook(book);
+          await refreshBooks();
+          const desiredDelay = book.running ? 4000 : 15000;
+          if (desiredDelay !== state.pollDelay) startPolling();
+          return;
+        }
         const job = await api(`/api/jobs/${state.selected.id}`);
         updateJob(job);
         await loadLog();
@@ -2012,6 +2180,12 @@
 
     $("#new-job-button").addEventListener("click", showNewJob);
     $("#book-button").addEventListener("click", showBooks);
+    $("#history-filter").addEventListener("click", event => {
+      const button = event.target.closest("button[data-filter]");
+      if (!button) return;
+      state.historyFilter = button.dataset.filter;
+      renderJobs();
+    });
     $("#refresh-log").addEventListener("click", loadLog);
     $("#refresh-transcript").addEventListener("click", loadTranscript);
     $("#create-mode").addEventListener("change", syncCreateMode);
@@ -2082,6 +2256,7 @@
         }
         $("#book-file").value = "";
         await refreshBooks();
+        await selectBook(book.id);
       } catch (error) {
         notify(error.message, true);
       } finally {
@@ -2102,9 +2277,18 @@
         renderJobs();
         renderBooks();
         const remembered = localStorage.getItem("video-translator-job");
-        if (remembered && jobs.some(job => job.id === remembered)) {
+        const rememberedKind = localStorage.getItem(
+          "video-translator-history-kind"
+        );
+        if (
+          remembered &&
+          rememberedKind === "book" &&
+          books.some(book => book.id === remembered)
+        ) {
+          await selectBook(remembered);
+        } else if (remembered && jobs.some(job => job.id === remembered)) {
           await selectJob(remembered);
-        } else if (jobs.length) {
+        } else if (historyItems().length) {
           $("#new-job-panel").hidden = true;
           $("#empty-panel").hidden = false;
         }
