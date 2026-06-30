@@ -47,7 +47,10 @@ def test_local_console_lists_and_creates_staged_job(
         assert response.status_code == 202
         created = response.json()
         assert created["next_step"] == "download"
-        assert created["directory_name"] == created["id"]
+        assert created["directory_name"].endswith(f"--{created['id']}")
+        assert created["directory_path"].endswith(created["directory_name"])
+        assert created["manifest_path"].endswith("manifest.json")
+        assert created["log_path"].endswith("pipeline.log")
         assert submitted["step"] == PipelineStep.download
         assert submitted["settings"].max_download_height == 720
         assert submitted["settings"].download_backend == "native"
@@ -121,21 +124,20 @@ def test_automated_endpoint_runs_all_steps_with_one_settings_snapshot(
         ),
     )
 
-    def fake_submit(source, options, *, settings=None, metadata=None):
+    def fake_submit_existing(manifest, *, settings=None, metadata=None):
         submitted.update(
             {
-                "source": source,
-                "options": options,
+                "source": manifest.source,
+                "options": manifest.options,
                 "settings": settings,
                 "metadata": metadata,
             }
         )
-        manifest = manager.store.create(source, options)
         manifest.metadata.update(metadata or {})
         manager.store.save(manifest)
         return manifest
 
-    monkeypatch.setattr(manager, "submit", fake_submit)
+    monkeypatch.setattr(manager, "submit_existing", fake_submit_existing)
     with TestClient(app) as client:
         response = client.post(
             "/api/jobs/automated",
@@ -193,6 +195,29 @@ def test_api_key_template_uses_keychain_reference(
     assert response.status_code == 200
     assert response.json()["ref"] == "b" * 32
     assert saved["value"] == "cloud-secret"
+
+
+def test_book_import_and_list_api(tmp_path: Path) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/books/import",
+            files={
+                "file": (
+                    "Example Book.epub",
+                    b"epub-placeholder",
+                    "application/epub+zip",
+                )
+            },
+            data={"output_mode": "bilingual"},
+        )
+        books = client.get("/api/books").json()
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "Example Book"
+    assert response.json()["output_mode"] == "bilingual"
+    assert books[0]["id"] == response.json()["id"]
+    assert "source_path" not in books[0]
 
 
 def test_segments_preview_is_limited(tmp_path: Path) -> None:

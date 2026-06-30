@@ -2,12 +2,15 @@ from pathlib import Path
 
 from video_translator.models import JobStatus, PipelineOptions
 from video_translator.settings import Settings
-from video_translator.store import JobStore, safe_job_title
+from video_translator.store import JobStore, initial_job_title, safe_job_title
 
 
 def test_job_store_roundtrip(tmp_path: Path) -> None:
     store = JobStore(Settings(data_dir=tmp_path))
     manifest = store.create("https://youtu.be/example", PipelineOptions())
+    assert store.job_dir(manifest.id).name == (
+        f"待下载-youtu.be-example--{manifest.id}"
+    )
     store.set_stage(manifest, JobStatus.transcribing, 25, "识别")
     restored = store.get(manifest.id)
     assert restored.status == JobStatus.transcribing
@@ -39,6 +42,19 @@ def test_job_directory_can_include_title_and_still_resolve_by_id(
 def test_safe_job_title_has_readable_fallback_and_length_limit() -> None:
     assert safe_job_title(" / : ? ") == "untitled"
     assert safe_job_title("a" * 100) == "a" * 60
+
+
+def test_initial_job_title_uses_url_hints_before_download() -> None:
+    assert (
+        initial_job_title("https://www.bilibili.com/video/BV1pG6xBrEct?p=68")
+        == "待下载-bilibili.com-BV1pG6xBrEct-p68"
+    )
+    assert (
+        initial_job_title(
+            "https://podcasts.apple.com/cn/podcast/name/id1?i=1000745497980"
+        )
+        == "待下载-podcasts.apple.com-id1-i1000745497980"
+    )
 
 
 def test_job_store_repairs_paths_after_data_directory_moves(

@@ -34,8 +34,10 @@ make web
 ```
 
 第一次按需要展开模板修改，之后点击“保存为我上次的模板”。ASR、翻译、TTS、
-对齐和混音配置保存在当前浏览器；API Key 不保存。自动流程中途失败时，已经成功
-的步骤仍会保留，可以从失败步骤单独重跑。
+对齐和混音配置保存在当前浏览器；云模型 API Key 加密保存在当前 Mac 的
+系统“钥匙串访问”中，浏览器模板只记录不可逆推出密钥的引用。自动流程中途失败时，
+已经成功的步骤仍会保留，可以从失败步骤单独重跑；翻译还会在每批完成后写入断点，
+后续继续时不会重新消耗已经完成部分的模型额度。
 
 命令行也可以一次跑完：
 
@@ -166,6 +168,7 @@ make mux JOB_ID='任务ID'
 | `SOURCE_LANGUAGE` | 空 | 留空自动检测；明确英语填 `en`、中文填 `zh`、日语填 `ja`。 |
 | `ASR_DEVICE` | `auto` | 仅 faster-whisper 使用：CPU 填 `cpu`，NVIDIA 机器可填 `cuda`。 |
 | `ASR_COMPUTE_TYPE` | `auto` | 仅 faster-whisper 使用：CPU 推荐 `int8`，NVIDIA GPU 推荐 `float16`。 |
+| `ASR_UNCLEAR_THRESHOLD` | `0.45` | 低于该置信度的语音不猜测，字幕标为 `【原音不清，未能可靠识别】`；原始识别候选仍保留在 `segments.json`。 |
 | `TRANSCRIBE_ARGS` | 空 | 已识别任务重新执行时填 `--force`。 |
 
 翻译参数：
@@ -176,11 +179,12 @@ make mux JOB_ID='任务ID'
 | `TRANSLATOR_PROVIDER` | `openai_compatible` | 可选 `codex_cli`、`ollama`、`kimi`、`minimax`、`deepseek`、通用兼容接口或 `passthrough`。 |
 | `TRANSLATOR_BASE_URL` | 按 provider | Kimi、MiniMax、DeepSeek 会自动使用官方中国区预设；通用接口和 Ollama 可自行修改。 |
 | `TRANSLATOR_MODEL` | 按 provider | 厂商选项会带推荐模型；仍可传入其他可用模型。 |
-| `TRANSLATOR_API_KEY` | 空 | Codex CLI/Ollama 留空；云服务按需填写，避免提交进 Git 或直接写进 shell 历史。 |
+| `TRANSLATOR_API_KEY` | 空 | Codex CLI/Ollama 留空；云服务按需填写。网页模板可将它保存到 macOS 钥匙串，任务文件和接口响应均不含明文。 |
 | `TRANSLATOR_TIMEOUT_SECONDS` | `180` | 本地模型慢时可提高。 |
-| `TRANSLATION_BATCH_SIZE` | `12` | 推荐 12；超时就调小，上下文不足可调大。 |
+| `TRANSLATION_BATCH_SIZE` | Codex `48`，其他 `12` | Codex Plus 推荐用较大批次减少调用次数；接口超时或输出漏项时调小。 |
 | `TRANSLATOR_CODEX_BIN` | `codex` | Codex CLI 命令或绝对路径。 |
-| `TRANSLATOR_CODEX_MODEL` | 空 | 仅 Codex CLI 使用；留空采用 Codex 当前默认模型。 |
+| `TRANSLATOR_CODEX_STRATEGY` | `balanced` | `economy`=`gpt-5.4-mini`/低推理，`balanced`=`gpt-5.4-mini`/中推理，`quality`=`gpt-5.5`/中推理；书籍默认 `quality`。 |
+| `TRANSLATOR_CODEX_MODEL` | 空 | 仅 Codex CLI 使用；填写后覆盖策略所选模型。一般保持空。 |
 | `GLOSSARY` | 空 | JSON 术语表文件路径。 |
 | `TRANSLATE_ARGS` | 空 | 重新翻译时填 `--force`。 |
 
@@ -218,8 +222,8 @@ make mux JOB_ID='任务ID'
 | YouTube/B站输入 | 🟡 | `yt-dlp`、Deno、Cookies、域名和时长限制 | URL 安全单元测试 | 使用已授权真实链接人工验收 |
 | Apple Podcasts | 🟡 | Apple Lookup API→发布者 RSS；支持列目录、最新 N 集、指定集和全集下载 | 真实节目成功读取 359 集 RSS；本地音频提取测试 | 纯音频最终双音轨 M4A 封装 |
 | 音频提取 | ✅ | FFmpeg 输出 16 kHz 单声道 WAV | 真实 FFmpeg 集成测试 | 无音轨、损坏媒体等异常样本 |
-| 语音识别 | 🟡 | 可选 MLX Apple GPU 或 faster-whisper CPU/CUDA；词级时间戳和片段合并 | 两个适配器自动化测试；本机 MLX/Metal tiny.en 真实推理通过 | `large-v3` 质量与长视频性能 |
-| 中文翻译 | 🟡 | Codex CLI、Ollama、Kimi、MiniMax、DeepSeek 和通用 OpenAI-compatible 接口；支持批次上下文和术语表 | JSON/ID 校验、云端预设、Codex 安全命令单元测试 | 仍需用完整长视频人工评价译文质量 |
+| 语音识别 | 🟡 | 可选 MLX Apple GPU 或 faster-whisper CPU/CUDA；词级时间戳、片段合并、低置信度特殊占位及原始候选保留；占位时间槽不朗读猜测内容 | 两个适配器和模糊片段静音自动化测试；本机 MLX/Metal tiny.en 真实推理通过 | `large-v3` 质量、阈值与长视频性能 |
+| 中文翻译 | 🟡 | Codex CLI、Ollama、Kimi、MiniMax、DeepSeek 和通用 OpenAI-compatible 接口；Plus 分档、批次上下文、术语表和逐批断点 | JSON/ID/断点校验、云端预设、Codex CLI 真实短句翻译 | 仍需用完整长视频人工评价译文质量 |
 | Edge 中文 TTS | ✅ | 单一中文音色，逐片段生成 | 本机真实语音生成通过 | 长文本、限流和失败重试 |
 | 通用 HTTP TTS | 🟡 | JSON 请求，返回音频字节 | 代码已实现 | 尚未连接真实服务 |
 | CosyVoice | 🟡 | 兼容官方 FastAPI 的 SFT、zero-shot、cross-lingual、instruct 接口 | PCM→WAV 封装已实现 | 需要独立 CosyVoice 服务和授权声音验收 |
@@ -228,13 +232,16 @@ make mux JOB_ID='任务ID'
 | 人声/BGM 分离 | 🟡 | 可选 Demucs `no_vocals` | 调用代码已实现 | 依赖未默认安装，尚未做模型验收 |
 | 字幕与双音轨 MP4 | ✅ | 中文软字幕、中文配音默认音轨、可选原声音轨 | 自动检查 1 视频 + 2 音频 + 1 字幕流 | 更多播放器兼容性 |
 | CLI | ✅ | 原 CLI 加根目录 `main.py`：批量下载、分步执行、状态、断点恢复、完整运行 | 冒烟测试及本地 download→extract 验证 | 更完善的交互式界面 |
-| Web/API | ✅ | 本地任务列表、分步执行、参数说明、日志、识别片段预览和输出下载 | API 自动化测试、真实历史任务加载 | 任务取消和合集批量操作 |
+| Web/API | ✅ | 视频/书籍任务列表、模板自动执行、钥匙串密钥、参数说明、日志、片段预览和输出下载 | API 自动化测试、真实历史任务加载 | 任务取消和合集批量操作 |
+| EPUB 书籍翻译 | 🟡 | 按 spine 抽取、逐批翻译、保留图片/CSS/链接；纯译文或段落双语；重建导航文本 | 含图片和目录链接的 EPUB 自动化测试 | 大型复杂 EPUB 与不同阅读器人工验收 |
+| PDF 书籍翻译 | 🟡 | 固定页数覆盖排版、保留原页图片、宋体嵌入、纯译文或块内双语、目录标题更新 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 扫描件 OCR、复杂彩色背景和极端密排页面 |
+| 书籍中间缓存 | ✅ | 导入→抽取→翻译→排版独立执行；文本块、译文哈希和逐批断点长期保留 | 改排版模式不重复翻译的自动化测试 | 缓存清理和版本迁移工具 |
 | 任务状态与日志 | ✅ | 单机 JSON manifest、每任务日志和中间文件 | JobStore 单元测试 | 数据库、恢复和分布式队列 |
 | 多说话人/多音色 | ⬜ | 尚未实现 | — | diarization、说话人到音色映射 |
 | 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
 | 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
 
-当前自动化测试基线：**54 项测试通过**。
+当前自动化测试基线：**64 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -242,7 +249,7 @@ make mux JOB_ID='任务ID'
 
 ```text
 data/
-├── jobs/{title}--{job_id}/
+├── jobs/{待下载-source-hint|title}--{job_id}/
 │   ├── manifest.json       # 当前状态、进度、错误和文件路径
 │   ├── pipeline.log        # FFmpeg 和各阶段日志
 │   ├── source.mp4          # 下载或复制的原视频
@@ -255,13 +262,22 @@ data/
 │   └── separated/          # 启用 Demucs 后的人声分离结果
 ├── collections/
 │   └── {collection_id}.json  # 合集分集与独立任务 ID 对照
+├── books/jobs/{title}--{book_id}/
+│   ├── source.pdf|epub       # 本地保存的原书
+│   ├── book-manifest.json    # 书籍步骤、模式、错误和输出路径
+│   ├── blocks.json           # 文本块、原文、译文和翻译缓存哈希
+│   └── extracted/            # EPUB 解包结构等可复用中间产物
+├── books/outputs/
+│   └── {title}-{book_id}-zh.pdf|epub
 └── outputs/
     └── {title}-{job_id}.mp4
 ```
 
-远程媒体的标题要在读取视频信息后才能确定，因此任务会先用 ID 创建临时目录；
-下载成功后自动改为 `{视频标题}--{完整任务ID}`。后续命令仍只需传任务 ID，
-同名视频也不会互相覆盖；旧版的纯 ID 目录仍然兼容。
+远程媒体的标题要在读取视频信息后才能确定，因此任务会先创建一个可读的
+`待下载-{站点或来源提示}--{完整任务ID}` 目录和 `manifest.json`；下载成功后
+自动改为 `{视频标题}--{完整任务ID}`。后续命令仍只需传任务 ID，同名视频也不会
+互相覆盖；旧版的纯 ID 目录仍然兼容。网页任务详情会直接显示任务目录、
+`manifest.json`、`pipeline.log` 和已生成产物的绝对路径。
 
 任务状态依次为：
 
@@ -554,10 +570,26 @@ codex login status
 ```bash
 make translate \
   JOB_ID='任务ID' \
-  TRANSLATOR_PROVIDER=codex_cli
+  TRANSLATOR_PROVIDER=codex_cli \
+  TRANSLATOR_CODEX_STRATEGY=balanced
 ```
 
-通常不要指定模型，让 Codex 使用当前可用的默认模型。确实需要覆盖时：
+这里复用的是 `codex login` 保存的 ChatGPT 登录态；用 Plus 登录时走 Plus
+方案的 Codex 使用额度，不要求购买 OpenAI Platform API token。三档策略为：
+
+| 策略 | 模型和推理强度 | 推荐用途 |
+|---|---|---|
+| `economy` | `gpt-5.4-mini` + low | 先跑草稿、超长但不重要的内容，最节省额度 |
+| `balanced` | `gpt-5.4-mini` + medium | 视频字幕默认；大批次减少请求次数，质量与额度平衡 |
+| `quality` | `gpt-5.5` + medium | 书籍、术语密集内容、最终定稿 |
+| `account_default` | 账号当前默认模型 + medium | 不希望项目固定模型时使用 |
+
+较高推理强度会更快消耗方案限额，因此当前不把 `high` 作为默认值。程序每批
+翻译后立即保存 `segments.json`；中断后重跑只翻未完成片段。视频 Codex 默认
+每批 48 段，书籍质量模式默认每批 24 个文本块。方案限额仍受账号、任务大小和
+服务端规则影响，不等同于无限使用。
+
+一般通过策略选模型。确实需要手动覆盖时：
 
 ```bash
 make translate \
@@ -639,8 +671,10 @@ make translate \
 ```
 
 MiniMax 和 DeepSeek 分别把 provider 改成 `minimax`、`deepseek`。也可以直接
-在网页中选择厂商并填写 API Key。密钥只随这一次请求进入本地后端，不会回显，
-也不会写入任务 manifest；不要把真实密钥提交到 Git。
+在网页中选择厂商并填写 API Key。保存模板时，密钥写入当前用户的 macOS
+钥匙串；模板只保存随机引用，接口不会回显，任务 manifest 也不会写入明文。
+切换厂商或更新密钥后重新保存模板即可。命令行参数不会自动进入钥匙串，仍不要把
+真实密钥提交到 Git。
 
 厂商地址或模型变更时，可以显式覆盖：
 
@@ -653,7 +687,9 @@ make translate \
   TRANSLATOR_API_KEY="$API_KEY"
 ```
 
-官方参考：[Codex 非交互模式](https://developers.openai.com/codex/noninteractive)、
+官方参考：[Codex 方案与额度](https://developers.openai.com/codex/pricing)、
+[Codex 模型](https://developers.openai.com/codex/models)、
+[Codex 非交互模式](https://developers.openai.com/codex/noninteractive)、
 [Kimi API](https://platform.kimi.com/docs/guide/start-using-kimi-api)、
 [MiniMax OpenAI 兼容接口](https://platform.minimaxi.com/docs/api-reference/text-openai-api)、
 [DeepSeek API](https://api-docs.deepseek.com/)。
@@ -795,18 +831,28 @@ make web
 网页是本地流水线控制台，直接读取和修改项目目录下的 `data/`：
 
 - 左侧显示所有历史任务，不需要重新输入任务 ID；
+- 新建任务会先落盘 `manifest.json` 和任务目录，再提交下载或自动 7 步；
 - 新建任务可选“一键模板”自动连续执行全部 7 步，也可切回只下载的分步模式；
-- 模板记住上一次 ASR、翻译、TTS、对齐和混音配置，但不保存 API Key；
+- 模板记住上一次 ASR、翻译、TTS、对齐和混音配置；API Key 存入 macOS
+  钥匙串，浏览器模板只保存随机引用；
 - 下载、抽取、识别、翻译、配音、对齐、封装均有独立按钮；
 - 翻译页可选 Codex CLI、Ollama、Kimi、MiniMax、DeepSeek 或自定义兼容接口；
+- “翻译 PDF / EPUB”可上传书籍，选择纯译文或原文/译文相邻排版，一键或分步执行；
 - 每个步骤都显示参数含义、默认值、推荐值和等价 Make 命令；
-- 页面可以查看 `pipeline.log` 和带起止时间的识别片段；
+- 页面可以查看任务目录、`manifest.json`、`pipeline.log`、中间产物路径、最终
+  MP4 下载入口和带起止时间的识别片段；
 - API 默认只监听 `127.0.0.1`，任务和媒体文件保存在本机。
+
+注意：当前后台执行器仍是 Web 服务进程内的线程池。重启 `make web` 会中断正在
+运行的下载、翻译或排版线程；已经写入 `manifest.json`、`segments.json`、
+`blocks.json` 和输出文件的中间结果会保留。视频任务可从失败步骤继续，书籍任务
+可点击“继续完成全部”或重新执行翻译步骤，已翻译且缓存键未变化的文本块会跳过。
 
 当前网页覆盖的步骤：
 
 ```text
 download → extract → transcribe → translate → synthesize → align → mux
+book import → extract → translate → render
 ```
 
 Mac 参数说明：网页可以选择 `mlx-whisper` 使用 Apple GPU/Metal，也可以选择
@@ -906,6 +952,77 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 ```
 
 预期返回 HTTP 400，而不是访问本机地址。
+
+## 9A. PDF / EPUB 书籍翻译
+
+网页点击“＋ 翻译 PDF / EPUB”，选择文件后可配置：
+
+- 输出模式：`translated_only` 去除正文原文，或 `bilingual` 原文一段、译文一段；
+- 翻译后端：与视频相同，支持 Codex CLI、Ollama、Kimi、MiniMax、DeepSeek
+  和通用 OpenAI-compatible 接口；
+- 执行方式：一键执行抽取、翻译、排版，或一步一步执行并检查中间结果；
+- Codex 策略：书籍默认 `quality`，重要出版内容建议保持该值；
+- 术语表：继续使用 JSON 对象，保证人名、书名、技术词汇前后一致。
+
+命令行一键运行：
+
+```bash
+make book-run \
+  BOOK_FILE='/绝对路径/source.epub' \
+  BOOK_MODE=bilingual \
+  BOOK_PROVIDER=codex_cli \
+  BOOK_CODEX_STRATEGY=quality
+```
+
+首次建议分步测试一本短书：
+
+```bash
+# 1. 导入；记下返回的书籍任务 ID
+make book-import \
+  BOOK_FILE='/绝对路径/source.pdf' \
+  BOOK_MODE=translated_only
+
+# 2. 抽取结构和文本
+make book-extract BOOK_ID='书籍任务ID'
+
+# 3. 翻译；每个模型批次都会写入 blocks.json
+make book-translate \
+  BOOK_ID='书籍任务ID' \
+  BOOK_PROVIDER=codex_cli \
+  BOOK_CODEX_STRATEGY=quality
+
+# 4. 从缓存译文排版；切换模式不会重新调用模型
+make book-render \
+  BOOK_ID='书籍任务ID' \
+  BOOK_MODE=bilingual
+
+make book-status BOOK_ID='书籍任务ID'
+```
+
+中间文件保存在 `data/books/jobs/{书名}--{ID}/`。`blocks.json` 为可复用的
+文本块缓存；缓存键包含原文、目标语言、术语表、provider、模型和 Codex 策略。
+这些会影响译文的值不变时，失败后继续或重新排版不会重复读取、翻译前面的内容，
+可以明显减少 Plus/API 额度消耗。
+
+排版处理原则：
+
+- EPUB 按 OPF spine 读取章节，保留原图、CSS、资源和内部链接；目录使用链接而非
+  固定页码，翻译目录标题后仍指向原章节位置；
+- PDF 保持原页尺寸和页数，在原文本区域内重新排中文，图片留在原页；默认嵌入
+  macOS 宋体作为印刷正文，PDF outline 目录标题会随译文更新；
+- 因 PDF 采用固定页数，原页码不会发生漂移；内容过密无法在最低字号内装下时，
+  任务 metadata 会记录 `layout_warnings`，应人工检查对应页面；
+- 扫描版 PDF 当前没有 OCR；复杂彩色背景、环绕图文和多栏学术排版仍需人工校样。
+  严谨出版的最终版本应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
+
+最小验收顺序：
+
+1. 导入后确认格式、标题和任务目录；
+2. 抽取后打开 `blocks.json`，抽查章节顺序、页码和原文；
+3. 翻译中途停止一次，再继续，确认已完成块没有重新翻译；
+4. 用两种输出模式各排一次，确认第二次排版没有再次消耗模型额度；
+5. EPUB 用 Apple Books/Calibre 检查目录跳转、图片和段落；PDF 用预览检查目录、
+   页数、图片、中文字体、溢出警告和至少每章一页的译文准确度。
 
 ## 10. 第八步：验证 YouTube/B站输入
 
@@ -1218,6 +1335,7 @@ make transcribe \
   ASR_BACKEND=mlx_whisper \
   ASR_MODEL=small \
   SOURCE_LANGUAGE=en \
+  ASR_UNCLEAR_THRESHOLD=0.45 \
   TRANSCRIBE_ARGS=''
 ```
 
@@ -1231,6 +1349,7 @@ make transcribe \
 | `SOURCE_LANGUAGE` | 空 | 原音频语言代码。`en` 是英语、`zh` 是中文、`ja` 是日语、`ko` 是韩语。留空时自动检测。它不是目标翻译语言。 |
 | `ASR_DEVICE` | `auto` | 只对 faster-whisper 生效。`auto` 会在存在 NVIDIA CUDA 时选择 `cuda`，否则选择 `cpu`。 |
 | `ASR_COMPUTE_TYPE` | `auto` | 只对 faster-whisper 生效。CPU 推荐 `int8`，NVIDIA CUDA 推荐 `float16`。 |
+| `ASR_UNCLEAR_THRESHOLD` | `0.45` | 综合词概率、平均 log probability 和无语音概率得到置信度。低于阈值时不让翻译模型猜测，中文字幕显示 `【原音不清，未能可靠识别】`。设为 `0` 可关闭。 |
 | `TRANSCRIBE_ARGS` | 空 | 传给分步执行器的附加参数。当前最常用的是 `--force`，用于重新执行已经完成的识别步骤。 |
 
 常用模型：
@@ -1257,6 +1376,9 @@ make transcribe \
 
 第一次运行会下载对应后端的 Whisper 模型。MLX 模型来自 MLX Community，
 使用 Apple GPU/Metal；进度和错误记录在任务目录的 `pipeline.log`。
+被标记为模糊的片段仍在 `segments.json` 保存 `raw_source_text`、置信度和
+`asr_unclear=true`，方便后续人工修正；占位文本不会发送给翻译模型，也不会被
+中文 TTS 朗读，该时间槽会生成静音，只在字幕中提示观众。
 
 当前这台 Apple Silicon 机器可以明确写成：
 
@@ -1499,6 +1621,8 @@ Demucs 首次运行会下载模型，CPU 处理很慢，因此它不是 MVP 默�
 - 外部下载、LLM 和 TTS 尚未实现统一重试及熔断；
 - 任务状态存在本地 JSON，尚无数据库；
 - 只适合单机 MVP，不适合多实例生产部署；
+- PDF 采用固定版面覆盖策略；扫描件、复杂多栏和彩色纹理背景暂不保证自动排版质量；
+- EPUB 会保留包内资源和目录链接，但最终效果仍受阅读器和原书 CSS 影响；
 - 中间文件不会自动清理。
 
 ## 17. 内容授权

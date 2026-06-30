@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     translation_batch_size: int = 12
     translator_codex_bin: str = "codex"
     translator_codex_model: str | None = None
+    translator_codex_strategy: Literal[
+        "economy",
+        "balanced",
+        "quality",
+        "account_default",
+    ] = "balanced"
+    asr_unclear_threshold: float = 0.45
 
     tts_provider: Literal["edge", "http", "cosyvoice"] = "edge"
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
@@ -109,6 +116,11 @@ class Settings(BaseSettings):
                 self.translator_base_url = preset["base_url"]
             if self.translator_model == DEFAULT_TRANSLATOR_MODEL:
                 self.translator_model = preset["model"]
+        if (
+            self.translator_provider == "codex_cli"
+            and self.translation_batch_size == 12
+        ):
+            self.translation_batch_size = 48
         return self
 
     @property

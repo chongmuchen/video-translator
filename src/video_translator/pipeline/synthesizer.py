@@ -126,6 +126,19 @@ class SpeechSynthesizer:
         if not output.is_file() or output.stat().st_size == 0:
             raise PipelineError("TTS 没有生成有效音频。")
 
+    def _write_silence(self, segment: Segment, output: Path) -> None:
+        """Keep an unclear subtitle slot without speaking its marker aloud."""
+
+        frame_count = max(
+            1,
+            round(segment.duration * self.settings.dub_sample_rate),
+        )
+        with wave.open(str(output), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(self.settings.dub_sample_rate)
+            audio.writeframes(b"\x00\x00" * frame_count)
+
     def synthesize_segments(
         self,
         segments: list[Segment],
@@ -136,6 +149,15 @@ class SpeechSynthesizer:
             text = (segment.translated_text or "").strip()
             if not text:
                 raise PipelineError(f"片段 {segment.index} 没有可朗读的译文。")
+            if segment.asr_unclear:
+                output = output_dir / f"{segment.index:05d}.wav"
+                self.logger.info(
+                    "片段 %s 原音不清：保留字幕占位并生成静音",
+                    segment.index,
+                )
+                self._write_silence(segment, output)
+                segment.tts_file = str(output)
+                continue
             extension = (
                 ".wav"
                 if self.settings.tts_provider == "cosyvoice"

@@ -113,10 +113,13 @@ def load_sources(args: argparse.Namespace) -> list[str]:
 def print_job(manifest: JobManifest, pipeline: StepwiseVideoTranslationPipeline) -> None:
     next_step = pipeline.next_step(manifest)
     completed = ", ".join(manifest.completed_steps) or "无"
+    job_dir = pipeline.store.job_dir(manifest.id)
     print(f"\n任务 ID:    {manifest.id}")
     print(f"标题:       {manifest.title or '-'}")
     print(f"状态:       {manifest.status.value}")
     print(f"进度:       {manifest.progress}%")
+    print(f"任务目录:   {job_dir}")
+    print(f"执行日志:   {job_dir / 'pipeline.log'}")
     print(f"已完成步骤: {completed}")
     print(f"下一步:     {next_step.value if next_step else '无，任务已完成'}")
     if manifest.source_path:

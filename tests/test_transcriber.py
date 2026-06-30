@@ -4,9 +4,10 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
-from video_translator.models import Segment
+from video_translator.models import Segment, UNCLEAR_TRANSCRIPT_TEXT
 from video_translator.pipeline.transcriber import (
     MlxWhisperTranscriber,
+    make_asr_segment,
     merge_segments,
     mlx_model_name,
 )
@@ -24,6 +25,22 @@ def test_merge_short_fragments() -> None:
     assert len(merged) == 2
     assert merged[0].source_text == "This is a test."
     assert [segment.index for segment in merged] == [0, 1]
+
+
+def test_low_confidence_speech_uses_visible_placeholder() -> None:
+    segment = make_asr_segment(
+        index=0,
+        start=1.0,
+        end=2.0,
+        text="possibly wrong words",
+        raw={"words": [{"probability": 0.2}]},
+        unclear_threshold=0.45,
+    )
+
+    assert segment.source_text == UNCLEAR_TRANSCRIPT_TEXT
+    assert segment.raw_source_text == "possibly wrong words"
+    assert segment.asr_unclear is True
+    assert segment.asr_confidence == 0.2
 
 
 def test_maps_standard_model_names_to_mlx_community() -> None:

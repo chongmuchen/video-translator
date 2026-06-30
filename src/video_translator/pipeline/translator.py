@@ -8,13 +8,13 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import httpx
 
 from ..errors import ConfigurationError, PipelineError
-from ..models import Segment
+from ..models import Segment, UNCLEAR_TRANSCRIPT_TEXT
 from ..settings import Settings
 
 
@@ -111,14 +111,33 @@ class SegmentTranslator:
             f"{json.dumps(payload_segments, ensure_ascii=False)}"
         )
 
+        value = self.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        apply_translation_response(
+            segments,
+            json.dumps(value, ensure_ascii=False),
+        )
+
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict:
+        """Run the configured provider and return one validated JSON object."""
+
+        if self.settings.translator_provider == "passthrough":
+            raise ConfigurationError(
+                "passthrough 不支持通用结构化翻译。"
+            )
         if self.settings.translator_provider == "codex_cli":
             content = self._translate_with_codex(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
-            apply_translation_response(segments, content)
-            return
-
+            return _extract_json_object(content)
         if not self.settings.translator_base_url:
             raise ConfigurationError("没有配置 VT_TRANSLATOR_BASE_URL。")
 
@@ -149,7 +168,7 @@ class SegmentTranslator:
             content = result["choices"][0]["message"]["content"]
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise PipelineError(f"调用翻译服务失败：{exc}") from exc
-        apply_translation_response(segments, str(content))
+        return _extract_json_object(str(content))
 
     def _translate_with_codex(
         self,
@@ -212,13 +231,34 @@ class SegmentTranslator:
                     "--color",
                     "never",
                 ]
-                if self.settings.translator_codex_model:
+                strategy = self.settings.translator_codex_strategy
+                strategy_defaults = {
+                    "economy": ("gpt-5.4-mini", "low"),
+                    "balanced": ("gpt-5.4-mini", "medium"),
+                    "quality": ("gpt-5.5", "medium"),
+                    "account_default": (None, "medium"),
+                }
+                default_model, reasoning_effort = strategy_defaults[strategy]
+                selected_model = (
+                    self.settings.translator_codex_model
+                    or default_model
+                )
+                if selected_model:
                     command.extend(
                         [
                             "--model",
-                            self.settings.translator_codex_model,
+                            selected_model,
                         ]
                     )
+                command.extend(
+                    [
+                        "--config",
+                        (
+                            "model_reasoning_effort="
+                            f'"{reasoning_effort}"'
+                        ),
+                    ]
+                )
                 command.append("-")
                 result = subprocess.run(
                     command,
@@ -252,19 +292,32 @@ class SegmentTranslator:
         *,
         target_language: str,
         glossary: dict[str, str],
+        on_batch_completed: (
+            Callable[[list[Segment]], None] | None
+        ) = None,
     ) -> list[Segment]:
+        for segment in segments:
+            if segment.asr_unclear:
+                segment.translated_text = UNCLEAR_TRANSCRIPT_TEXT
+        pending = [
+            segment
+            for segment in segments
+            if not (segment.translated_text or "").strip()
+        ]
         batch_size = max(1, self.settings.translation_batch_size)
-        for offset in range(0, len(segments), batch_size):
-            batch = segments[offset : offset + batch_size]
+        for offset in range(0, len(pending), batch_size):
+            batch = pending[offset : offset + batch_size]
             self.logger.info(
                 "翻译片段 %s–%s / %s",
                 offset + 1,
                 offset + len(batch),
-                len(segments),
+                len(pending),
             )
             self._translate_batch(
                 batch,
                 target_language=target_language,
                 glossary=glossary,
             )
+            if on_batch_completed:
+                on_batch_completed(segments)
         return segments

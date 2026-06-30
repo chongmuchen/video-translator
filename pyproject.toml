@@ -26,6 +26,10 @@ asr = ["faster-whisper>=1.2,<2"]
 mac = ["mlx-whisper>=0.4.3,<0.5"]
 media = ["static-ffmpeg>=3,<4"]
 separation = ["demucs>=4,<5"]
+books = [
+  "lxml>=5,<7",
+  "pymupdf>=1.26,<2",
+]
 dev = [
   "pytest>=8.4,<9",
   "pytest-cov>=6.2,<7",
@@ -37,6 +41,7 @@ all = [
 
 [project.scripts]
 video-translator = "video_translator.cli:main"
+book-translator = "video_translator.books.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_translator"]

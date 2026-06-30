@@ -89,6 +89,7 @@
       text-align: left;
     }
     .new-button:hover { background: rgba(255,255,255,.12); }
+    .new-button + .new-button { margin-top: 8px; }
     .job-list { display: grid; gap: 8px; }
     .job-item {
       width: 100%;
@@ -335,6 +336,36 @@
       font-size: 12px;
       line-height: 1.55;
     }
+    .job-paths {
+      display: grid;
+      gap: 7px;
+      margin-top: 16px;
+      border: 1px solid #ebe8e0;
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: #fbfaf6;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .job-path-line {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: baseline;
+    }
+    .job-path-line span {
+      color: var(--muted);
+      font-weight: 750;
+    }
+    .job-path-line code {
+      overflow-wrap: anywhere;
+      color: var(--ink);
+    }
+    .job-path-line a {
+      color: var(--green);
+      font-weight: 800;
+      text-decoration: none;
+    }
     .steps {
       margin-top: 18px;
       display: grid;
@@ -465,6 +496,16 @@
     }
     .segment time { color: var(--orange); font-family: ui-monospace, monospace; }
     .placeholder { padding: 25px 5px; color: var(--muted); text-align: center; font-size: 12px; }
+    .book-list { display: grid; gap: 10px; margin-top: 20px; }
+    .book-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      background: #fbfaf6;
+    }
+    .book-card strong { display: block; margin-bottom: 5px; }
+    .book-card p { margin: 0; color: var(--muted); font-size: 11px; }
+    .book-card .actions { margin-top: 12px; }
     .toast {
       position: fixed;
       right: 22px;
@@ -495,6 +536,7 @@
       .local-chip { display: inline-block; margin-top: 14px; }
       .job-headline { display: block; }
       .status-badge { display: inline-block; margin-top: 12px; }
+      .job-path-line { grid-template-columns: 1fr; gap: 2px; }
       .step-summary { grid-template-columns: 34px minmax(0,1fr); }
       .step-state { grid-column: 2; }
     }
@@ -509,6 +551,7 @@
       </div>
       <p class="local-note">本地流水线控制台</p>
       <button class="new-button" id="new-job-button">＋ 新建本地任务</button>
+      <button class="new-button" id="book-button">＋ 翻译 PDF / EPUB</button>
       <div class="side-title">历史任务</div>
       <div class="job-list" id="job-list"></div>
     </aside>
@@ -525,7 +568,7 @@
 
       <div class="workspace">
         <section class="panel new-job" id="new-job-panel">
-          <h3>第一步：创建并下载</h3>
+          <h3>第一步：先创建任务</h3>
           <p>支持 YouTube、B站单集和 Apple Podcasts 单集。任务清单和媒体保存在项目的 <code>data/</code>；使用云翻译或在线 TTS 时，文本会发送到你配置的服务。</p>
           <form id="new-job-form">
             <div class="grid">
@@ -538,8 +581,8 @@
               <div class="field">
                 <label for="create-mode">运行方式</label>
                 <select id="create-mode">
-                  <option value="automated" selected>按模板自动跑完 7 步（推荐）</option>
-                  <option value="staged">只下载，之后逐步检查</option>
+                  <option value="automated" selected>先建任务，再按模板自动跑完 7 步（推荐）</option>
+                  <option value="staged">先建任务，只执行下载</option>
                 </select>
                 <p class="help">自动模式失败后仍可从失败步骤继续，不需要重新下载。</p>
               </div>
@@ -620,6 +663,12 @@
                   </select>
                 </div>
                 <div class="field">
+                  <label for="template-asr-unclear-threshold">不清晰阈值</label>
+                  <input id="template-asr-unclear-threshold" type="number"
+                    min="0" max="1" step="0.05" value="0.45">
+                  <p class="help">低于该置信度时使用【原音不清，未能可靠识别】，不会让翻译模型猜测。</p>
+                </div>
+                <div class="field">
                   <label for="template-translator-provider">翻译后端</label>
                   <select id="template-translator-provider">
                     <option value="codex_cli" selected>本机 Codex CLI（复用登录）</option>
@@ -649,7 +698,17 @@
                 <div class="field">
                   <label for="template-translation-batch-size">每批翻译片段数</label>
                   <input id="template-translation-batch-size" type="number"
-                    min="1" max="100" value="12">
+                    min="1" max="100" value="48">
+                  <p class="help">Codex Plus 推荐 48，减少独立请求次数；普通 HTTP 接口可用 12。</p>
+                </div>
+                <div class="field">
+                  <label for="template-codex-strategy">Codex Plus 策略</label>
+                  <select id="template-codex-strategy">
+                    <option value="balanced" selected>平衡 — mini / medium（推荐）</option>
+                    <option value="quality">质量 — GPT-5.5 / medium</option>
+                    <option value="economy">节省 — mini / low</option>
+                    <option value="account_default">账号默认模型</option>
+                  </select>
                 </div>
                 <div class="field">
                   <label for="template-tts-provider">中文语音后端</label>
@@ -721,6 +780,84 @@
           </form>
         </section>
 
+        <section class="panel new-job" id="book-panel" hidden>
+          <h3>书籍翻译：PDF / EPUB</h3>
+          <p>分为抽取、翻译、排版三步。图片、章节和中间译文保存在本机；修改排版时直接复用译文缓存，不重复消耗模型额度。</p>
+          <form id="book-form">
+            <div class="grid">
+              <div class="field wide">
+                <label for="book-file">原书文件 <span class="recommended">PDF / EPUB</span></label>
+                <input id="book-file" type="file"
+                  accept=".pdf,.epub,application/pdf,application/epub+zip"
+                  required>
+              </div>
+              <div class="field">
+                <label for="book-mode">输出模式</label>
+                <select id="book-mode">
+                  <option value="translated_only" selected>只保留译文</option>
+                  <option value="bilingual">原文 + 译文对照</option>
+                </select>
+                <p class="help">EPUB 按段落交替；PDF 在原固定版面文本块内加入原文和译文。</p>
+              </div>
+              <div class="field">
+                <label for="book-target">目标语言</label>
+                <input id="book-target" value="简体中文">
+              </div>
+              <div class="field">
+                <label for="book-provider">翻译后端</label>
+                <select id="book-provider">
+                  <option value="codex_cli" selected>Codex Plus</option>
+                  <option value="ollama">Ollama</option>
+                  <option value="kimi">Kimi API</option>
+                  <option value="minimax">MiniMax API</option>
+                  <option value="deepseek">DeepSeek API</option>
+                  <option value="openai_compatible">其他 OpenAI-compatible</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="book-codex-strategy">Codex 策略</label>
+                <select id="book-codex-strategy">
+                  <option value="quality" selected>出版质量 — GPT-5.5 / medium</option>
+                  <option value="balanced">平衡 — GPT-5.4 mini / medium</option>
+                  <option value="economy">节省 — GPT-5.4 mini / low</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="book-base-url">接口地址</label>
+                <input id="book-base-url"
+                  value="http://127.0.0.1:11434/v1">
+              </div>
+              <div class="field">
+                <label for="book-model">模型名</label>
+                <input id="book-model"
+                  placeholder="Codex 使用策略模型时留空">
+              </div>
+              <div class="field">
+                <label for="book-api-key">API Key</label>
+                <input id="book-api-key" type="password"
+                  placeholder="可复用“我上次模板”保存在 Keychain 的密钥">
+              </div>
+              <div class="field wide">
+                <label for="book-glossary">术语表 JSON</label>
+                <textarea id="book-glossary"
+                  placeholder='{"source term":"固定译名"}'></textarea>
+              </div>
+              <div class="check-field">
+                <input id="book-auto" type="checkbox" checked>
+                <div>
+                  <label for="book-auto">导入后自动完成三步</label>
+                  <p class="help">关闭后可逐步检查抽取文本、翻译和最终排版。</p>
+                </div>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" id="book-submit" type="submit">导入并开始翻译</button>
+              <span class="legal">PDF 扫描件暂不含 OCR；EPUB 会保留图片、CSS 和目录链接。</span>
+            </div>
+          </form>
+          <div class="book-list" id="book-list"></div>
+        </section>
+
         <section id="job-panel" hidden>
           <div class="panel job-header">
             <div class="job-headline">
@@ -740,6 +877,7 @@
             </div>
             <div class="bar"><div id="progress-bar"></div></div>
             <div class="job-error" id="job-error"></div>
+            <div class="job-paths" id="job-paths"></div>
           </div>
 
           <div class="steps" id="steps"></div>
@@ -809,14 +947,15 @@
           {key: "asr_model", scope: "settings", label: "Whisper 模型", type: "select", value: "small", options: [["tiny","tiny — 只验线路"],["base","base — 快速草稿"],["small","small — 多语言推荐"],["small.en","small.en — 英语推荐"],["medium","medium — 更高质量"],["large-v3","large-v3 — 质量优先"],["turbo","turbo — 大模型加速版"]], help: "模型首次使用会下载并缓存在本机。"},
           {key: "source_language", scope: "options", label: "原始语言", type: "text", value: "", placeholder: "en / zh / ja；留空自动检测", help: "填写正确语言能减少误判；它不是翻译目标语言。"},
           {key: "asr_device", scope: "settings", label: "faster-whisper 计算设备", type: "select", value: "cpu", options: [["auto","auto"],["cpu","CPU"],["cuda","NVIDIA CUDA"]], help: "仅 faster-whisper 使用；选择 MLX 时自动禁用。"},
-          {key: "asr_compute_type", scope: "settings", label: "faster-whisper 计算精度", type: "select", value: "int8", options: [["auto","auto"],["int8","int8（CPU 推荐）"],["int8_float32","int8_float32"],["int8_float16","int8_float16（CUDA）"],["float16","float16（CUDA）"],["float32","float32"]], help: "仅 faster-whisper 使用；CPU 推荐 int8，NVIDIA GPU 推荐 float16。"}
+          {key: "asr_compute_type", scope: "settings", label: "faster-whisper 计算精度", type: "select", value: "int8", options: [["auto","auto"],["int8","int8（CPU 推荐）"],["int8_float32","int8_float32"],["int8_float16","int8_float16（CUDA）"],["float16","float16（CUDA）"],["float32","float32"]], help: "仅 faster-whisper 使用；CPU 推荐 int8，NVIDIA GPU 推荐 float16。"},
+          {key: "asr_unclear_threshold", scope: "settings", label: "不清晰置信度阈值", type: "number", value: "0.45", min: "0", max: "1", step: "0.05", help: "低于阈值的片段标记为【原音不清，未能可靠识别】，并跳过翻译，避免模型编造。"}
         ]
       },
       {
         id: "translate",
         name: "翻译为中文",
         description: "可选本机 Codex CLI、Ollama 或云模型并生成中文字幕",
-        recommendation: "你已安装 Codex CLI，可直接复用其登录态，留空模型名就使用 Codex 当前默认模型。Codex CLI 是本机入口，不代表离线推理；字幕仍可能发送到 OpenAI。若要求文本不离开电脑，请选 Ollama。Kimi、MiniMax、DeepSeek 会把字幕发送给对应厂商。",
+        recommendation: "Plus 推荐“平衡”策略：用 GPT-5.4 mini 的较高可用额度、medium 推理和 48 段大批次，减少 Codex turn 数；重要出版内容再选 GPT-5.5 质量模式。每批完成后立即落盘，失败重跑会跳过已有译文。",
         command: id => `# 复用本机 Codex 登录（推荐先试）\nmake translate JOB_ID='${id}' TRANSLATOR_PROVIDER=codex_cli\n# 其他示例：\nmake translate JOB_ID='${id}' TRANSLATOR_PROVIDER=kimi TRANSLATOR_API_KEY='...'`,
         fields: [
           {key: "target_language", scope: "options", label: "目标语言", type: "text", value: "简体中文", help: "当前配音流程推荐简体中文。"},
@@ -826,7 +965,8 @@
           {key: "translator_api_key", scope: "settings", label: "API Key", type: "password", value: "", placeholder: "Codex CLI / Ollama 留空", help: "只随本次请求传给本地后端，页面不会回显或写入任务文件。"},
           {key: "translator_codex_bin", scope: "settings", label: "Codex CLI 命令", type: "text", value: "codex", help: "一般保持 codex；也可以填写可执行文件的绝对路径。"},
           {key: "translator_codex_model", scope: "settings", label: "Codex 模型（可选）", type: "text", value: "", placeholder: "留空使用 Codex 当前默认模型", help: "只有 provider=Codex CLI 时生效；不建议为了翻译随意写一个未经账号支持的模型名。"},
-          {key: "translation_batch_size", scope: "settings", label: "每批片段数", type: "number", value: "12", min: "1", max: "100", help: "推荐 12；上下文不足可调大，接口超时可调小。"},
+          {key: "translator_codex_strategy", scope: "settings", label: "Codex Plus 策略", type: "select", value: "balanced", options: [["balanced","平衡 — GPT-5.4 mini / medium（推荐）"],["quality","质量 — GPT-5.5 / medium"],["economy","节省 — GPT-5.4 mini / low"],["account_default","账号默认模型"]], help: "Plus 日常字幕推荐平衡；正式书籍或术语密集内容使用质量。显式填写 Codex 模型时会覆盖策略模型。"},
+          {key: "translation_batch_size", scope: "settings", label: "每批片段数", type: "number", value: "48", min: "1", max: "100", help: "Codex Plus 推荐 48 以减少请求次数；普通 HTTP 接口推荐 12。每批完成都会保存。"},
           {key: "glossary", scope: "options", label: "术语表 JSON", type: "textarea", value: "", placeholder: "{\"Whisper\":\"Whisper\", \"pipeline\":\"流水线\"}", help: "必须是“原词: 译词”的 JSON 对象。", wide: true, json: true}
         ]
       },
@@ -874,6 +1014,7 @@
 
     const state = {
       jobs: [],
+      books: [],
       selected: null,
       timer: null,
       pollDelay: null,
@@ -890,10 +1031,12 @@
         burnSubtitles: false,
         asrBackend: "mlx_whisper",
         asrModel: "small",
+        asrUnclearThreshold: 0.45,
         translatorProvider: "codex_cli",
         translatorBaseUrl: "http://127.0.0.1:11434/v1",
         translatorModel: "",
-        translationBatchSize: 12,
+        translationBatchSize: 48,
+        codexStrategy: "balanced",
         ttsProvider: "edge",
         ttsVoice: "zh-CN-XiaoxiaoNeural",
         ttsRate: "+0%",
@@ -914,10 +1057,12 @@
         burnSubtitles: false,
         asrBackend: "mlx_whisper",
         asrModel: "small",
+        asrUnclearThreshold: 0.45,
         translatorProvider: "ollama",
         translatorBaseUrl: "http://127.0.0.1:11434/v1",
         translatorModel: "qwen3:8b",
         translationBatchSize: 12,
+        codexStrategy: "balanced",
         ttsProvider: "edge",
         ttsVoice: "zh-CN-XiaoxiaoNeural",
         ttsRate: "+0%",
@@ -953,12 +1098,16 @@
         burnSubtitles: $("#create-burn").checked,
         asrBackend: $("#template-asr-backend").value,
         asrModel: $("#template-asr-model").value,
+        asrUnclearThreshold: Number(
+          $("#template-asr-unclear-threshold").value
+        ),
         translatorProvider: $("#template-translator-provider").value,
         translatorBaseUrl: $("#template-translator-base-url").value.trim(),
         translatorModel: $("#template-translator-model").value.trim(),
         translatorApiKeyRef:
           $("#template-translator-api-key").dataset.secretRef || "",
         translationBatchSize: Number($("#template-translation-batch-size").value),
+        codexStrategy: $("#template-codex-strategy").value,
         ttsProvider: $("#template-tts-provider").value,
         ttsVoice: $("#template-tts-voice").value.trim(),
         ttsRate: $("#template-tts-rate").value.trim(),
@@ -983,6 +1132,8 @@
       if (applyPreset) {
         apiKey.value = "";
         apiKey.dataset.secretRef = "";
+        $("#template-translation-batch-size").value =
+          provider === "codex_cli" ? "48" : "12";
       }
       if (applyPreset && provider === "codex_cli") model.value = "";
       const usesCodex = provider === "codex_cli";
@@ -990,6 +1141,9 @@
         input.disabled = usesCodex;
         input.closest(".field").style.opacity = usesCodex ? ".48" : "1";
       }
+      const strategy = $("#template-codex-strategy");
+      strategy.disabled = !usesCodex;
+      strategy.closest(".field").style.opacity = usesCodex ? "1" : ".48";
       model.placeholder = usesCodex
         ? "留空使用 Codex 当前默认模型"
         : "填写服务端模型名";
@@ -1005,10 +1159,13 @@
         "#create-burn": template.burnSubtitles,
         "#template-asr-backend": template.asrBackend,
         "#template-asr-model": template.asrModel,
+        "#template-asr-unclear-threshold":
+          template.asrUnclearThreshold ?? 0.45,
         "#template-translator-provider": template.translatorProvider,
         "#template-translator-base-url": template.translatorBaseUrl,
         "#template-translator-model": template.translatorModel,
         "#template-translation-batch-size": template.translationBatchSize,
+        "#template-codex-strategy": template.codexStrategy || "balanced",
         "#template-tts-provider": template.ttsProvider,
         "#template-tts-voice": template.ttsVoice,
         "#template-tts-rate": template.ttsRate,
@@ -1071,7 +1228,9 @@
       );
       $("#create-template").querySelector('option[value="last"]').disabled = false;
       if (showNotice) {
-        notify("模板已保存；API Key 已安全写入 macOS Keychain。");
+        notify(template.translatorApiKeyRef
+          ? "模板已保存；API Key 已安全写入 macOS Keychain。"
+          : "模板已保存。");
       }
       return template;
     }
@@ -1081,8 +1240,8 @@
       $("#automation-settings").hidden = !automated;
       $("#template-picker-field").hidden = !automated;
       $("#create-submit").textContent = automated
-        ? "创建任务并自动跑完 7 步"
-        : "创建任务并只执行下载";
+        ? "新建任务，然后自动跑完 7 步"
+        : "新建任务，然后只执行下载";
     }
 
     function parseTemplateGlossary() {
@@ -1150,7 +1309,7 @@
         const button = document.createElement("button");
         button.className = `job-item${state.selected?.id === job.id ? " active" : ""}`;
         const title = document.createElement("strong");
-        title.textContent = job.title || job.source || job.id;
+        title.textContent = job.title || "等待获取媒体标题";
         const meta = document.createElement("span");
         const status = document.createElement("em");
         status.style.fontStyle = "normal";
@@ -1307,6 +1466,12 @@
           const apiKey = grid.querySelector("#translate-translator_api_key");
           const codexBin = grid.querySelector("#translate-translator_codex_bin");
           const codexModel = grid.querySelector("#translate-translator_codex_model");
+          const codexStrategy = grid.querySelector(
+            "#translate-translator_codex_strategy"
+          );
+          const batchSize = grid.querySelector(
+            "#translate-translation_batch_size"
+          );
           const presets = {
             ollama: ["http://127.0.0.1:11434/v1", "qwen3:8b"],
             kimi: ["https://api.moonshot.cn/v1", "kimi-k2.6"],
@@ -1324,10 +1489,13 @@
             if (applyPreset && presets[selected]) {
               [baseUrl.value, model.value] = presets[selected];
             }
+            if (applyPreset) {
+              batchSize.value = usesCodex ? "48" : "12";
+            }
             for (const input of [baseUrl, model, apiKey]) {
               setEnabled(input, !usesCodex && !isPassthrough);
             }
-            for (const input of [codexBin, codexModel]) {
+            for (const input of [codexBin, codexModel, codexStrategy]) {
               setEnabled(input, usesCodex);
             }
           };
@@ -1367,9 +1535,49 @@
       });
     }
 
+    function addJobPathLine(container, label, value, href = null) {
+      if (!value) return;
+      const line = document.createElement("div");
+      line.className = "job-path-line";
+      const name = document.createElement("span");
+      name.textContent = label;
+      const code = document.createElement("code");
+      code.textContent = value;
+      line.append(name, code);
+      if (href) {
+        const link = document.createElement("a");
+        link.href = href;
+        link.textContent = "下载";
+        line.append(link);
+      }
+      container.append(line);
+    }
+
+    function renderJobPaths(job) {
+      const box = $("#job-paths");
+      const paths = job.artifact_paths || {};
+      box.replaceChildren();
+      addJobPathLine(box, "任务目录", job.directory_path);
+      addJobPathLine(box, "任务清单", job.manifest_path);
+      addJobPathLine(box, "执行日志", job.log_path);
+      addJobPathLine(box, "源媒体", paths.source);
+      addJobPathLine(box, "识别音频", paths.audio);
+      addJobPathLine(box, "片段数据", paths.segments);
+      addJobPathLine(box, "字幕文件", paths.subtitle);
+      addJobPathLine(box, "配音音频", paths.dub_audio);
+      addJobPathLine(
+        box,
+        "最终视频",
+        paths.output || job.output_path,
+        job.download_ready ? `/api/jobs/${job.id}/download` : null
+      );
+      box.hidden = !box.children.length;
+    }
+
     function updateJob(job) {
       state.selected = job;
       $("#new-job-panel").hidden = true;
+      $("#book-panel").hidden = true;
       $("#empty-panel").hidden = true;
       $("#job-panel").hidden = false;
       $("#job-title").textContent = job.title || "等待获取媒体标题";
@@ -1385,6 +1593,7 @@
       const error = $("#job-error");
       error.textContent = job.error || "";
       error.style.display = job.error ? "block" : "none";
+      renderJobPaths(job);
       renderSteps(job);
       renderJobs();
     }
@@ -1414,9 +1623,167 @@
       state.selected = null;
       localStorage.removeItem("video-translator-job");
       $("#job-panel").hidden = true;
+      $("#book-panel").hidden = true;
       $("#empty-panel").hidden = true;
       $("#new-job-panel").hidden = false;
       renderJobs();
+    }
+
+    function showBooks() {
+      state.selected = null;
+      localStorage.removeItem("video-translator-job");
+      $("#job-panel").hidden = true;
+      $("#new-job-panel").hidden = true;
+      $("#empty-panel").hidden = true;
+      $("#book-panel").hidden = false;
+      renderJobs();
+      refreshBooks();
+    }
+
+    function bookRequestPayload() {
+      const provider = $("#book-provider").value;
+      const rawGlossary = $("#book-glossary").value.trim();
+      let glossary = {};
+      if (rawGlossary) {
+        try {
+          glossary = JSON.parse(rawGlossary);
+        } catch {
+          throw new Error("书籍术语表不是合法 JSON。");
+        }
+      }
+      const settings = {
+        translator_provider: provider,
+        translator_codex_strategy: $("#book-codex-strategy").value,
+        translation_batch_size:
+          provider === "codex_cli" ? 24 : 12,
+      };
+      const payload = {
+        target_language: $("#book-target").value.trim() || "简体中文",
+        output_mode: $("#book-mode").value,
+        glossary,
+        settings,
+      };
+      const model = $("#book-model").value.trim();
+      if (provider === "codex_cli") {
+        settings.translator_codex_bin = "codex";
+        settings.translator_codex_model = model || null;
+      } else {
+        settings.translator_base_url = $("#book-base-url").value.trim();
+        settings.translator_model = model;
+        const directKey = $("#book-api-key").value.trim();
+        const saved = readSavedAutomationTemplate();
+        if (directKey) settings.translator_api_key = directKey;
+        else if (
+          saved?.translatorProvider === provider &&
+          saved?.translatorApiKeyRef
+        ) {
+          payload.translator_api_key_ref =
+            saved.translatorApiKeyRef;
+        }
+      }
+      return payload;
+    }
+
+    function bookStatus(book) {
+      if (book.running) return "执行中";
+      if (book.error) return "失败，可继续";
+      if (book.status === "translating") return "已中断，可继续";
+      const labels = {
+        imported: "已导入",
+        extracted: "已抽取",
+        translating: "翻译中",
+        translated: "已翻译",
+        rendered: "已排版",
+        failed: "失败",
+      };
+      return labels[book.status] || book.status;
+    }
+
+    function renderBooks() {
+      const list = $("#book-list");
+      list.replaceChildren();
+      if (!state.books.length) {
+        const empty = document.createElement("div");
+        empty.className = "placeholder";
+        empty.textContent = "还没有书籍任务。";
+        list.append(empty);
+        return;
+      }
+      for (const book of state.books) {
+        const card = document.createElement("article");
+        card.className = "book-card";
+        const title = document.createElement("strong");
+        title.textContent = book.title;
+        const meta = document.createElement("p");
+        meta.textContent =
+          `${book.format.toUpperCase()} · ${bookStatus(book)} · ${book.id.slice(0, 8)}`;
+        const error = document.createElement("p");
+        error.style.color = "var(--red)";
+        error.textContent = book.error || "";
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const completed = new Set(book.completed_steps || []);
+        const definitions = [
+          ["extract", "1. 抽取", true],
+          ["translate", "2. 翻译", completed.has("extract")],
+          ["render", "3. 排版", completed.has("translate")],
+        ];
+        for (const [step, label, ready] of definitions) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "secondary";
+          button.textContent = completed.has(step)
+            ? `${label}（重跑）`
+            : label;
+          button.disabled = book.running || !ready;
+          button.addEventListener(
+            "click",
+            () => runBook(book.id, `steps/${step}`)
+          );
+          actions.append(button);
+        }
+        const all = document.createElement("button");
+        all.type = "button";
+        all.className = "primary";
+        all.textContent = "继续完成全部";
+        all.disabled = book.running;
+        all.addEventListener("click", () => runBook(book.id, "run"));
+        actions.append(all);
+        if (book.download_ready) {
+          const download = document.createElement("a");
+          download.className = "secondary";
+          download.href = `/api/books/${book.id}/download`;
+          download.textContent = "下载译本";
+          actions.append(download);
+        }
+        card.append(title, meta);
+        if (book.error) card.append(error);
+        card.append(actions);
+        list.append(card);
+      }
+    }
+
+    async function refreshBooks() {
+      try {
+        state.books = await api("/api/books");
+        renderBooks();
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
+    async function runBook(bookId, action) {
+      try {
+        await api(`/api/books/${bookId}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(bookRequestPayload()),
+        });
+        notify("书籍步骤已提交。");
+        await refreshBooks();
+      } catch (error) {
+        notify(error.message, true);
+      }
     }
 
     function buildStepPayload(definition, body, force) {
@@ -1578,7 +1945,12 @@
         Object.assign(payload.settings, {
           asr_backend: $("#template-asr-backend").value,
           asr_model: $("#template-asr-model").value,
+          asr_unclear_threshold: Number(
+            $("#template-asr-unclear-threshold").value
+          ),
           translator_provider: provider,
+          translator_codex_strategy:
+            $("#template-codex-strategy").value,
           translator_timeout_seconds: 180,
           translation_batch_size: Number(
             $("#template-translation-batch-size").value
@@ -1627,8 +1999,8 @@
         localStorage.setItem("video-translator-job", job.id);
         notify(
           automated
-            ? "任务已创建，将按模板自动跑完 7 步。"
-            : "任务已创建，正在下载。"
+            ? "任务已创建。目录和日志已显示，后台会按模板自动跑完 7 步。"
+            : "任务已创建。目录和日志已显示，后台正在下载。"
         );
         startPolling(true);
       } catch (error) {
@@ -1639,6 +2011,7 @@
     });
 
     $("#new-job-button").addEventListener("click", showNewJob);
+    $("#book-button").addEventListener("click", showBooks);
     $("#refresh-log").addEventListener("click", loadLog);
     $("#refresh-transcript").addEventListener("click", loadTranscript);
     $("#create-mode").addEventListener("change", syncCreateMode);
@@ -1670,13 +2043,64 @@
         button.disabled = false;
       }
     });
+    $("#book-provider").addEventListener("change", event => {
+      const provider = event.target.value;
+      const preset = createTranslatorPresets[provider];
+      if (preset) {
+        [$("#book-base-url").value, $("#book-model").value] = preset;
+      }
+      if (provider === "codex_cli") $("#book-model").value = "";
+      const usesCodex = provider === "codex_cli";
+      for (const input of [
+        $("#book-codex-strategy"),
+      ]) {
+        input.disabled = !usesCodex;
+        input.closest(".field").style.opacity = usesCodex ? "1" : ".48";
+      }
+    });
+    $("#book-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const submit = $("#book-submit");
+      submit.disabled = true;
+      try {
+        const data = new FormData();
+        data.append("file", $("#book-file").files[0]);
+        data.append("output_mode", $("#book-mode").value);
+        const book = await api("/api/books/import", {
+          method: "POST",
+          body: data,
+        });
+        if ($("#book-auto").checked) {
+          await api(`/api/books/${book.id}/run`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(bookRequestPayload()),
+          });
+          notify("书籍已导入，将自动完成抽取、翻译和排版。");
+        } else {
+          notify("书籍已导入，可以逐步执行。");
+        }
+        $("#book-file").value = "";
+        await refreshBooks();
+      } catch (error) {
+        notify(error.message, true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
 
     async function boot() {
       try {
-        const [health, jobs] = await Promise.all([api("/api/health"), api("/api/jobs")]);
+        const [health, jobs, books] = await Promise.all([
+          api("/api/health"),
+          api("/api/jobs"),
+          api("/api/books"),
+        ]);
         $("#local-chip").title = health.data_directory;
         state.jobs = jobs;
+        state.books = books;
         renderJobs();
+        renderBooks();
         const remembered = localStorage.getItem("video-translator-job");
         if (remembered && jobs.some(job => job.id === remembered)) {
           await selectJob(remembered);
@@ -1695,6 +2119,9 @@
     applyAutomationTemplate(savedTemplate || automationTemplates.mac_codex);
     $("#create-template").value = savedTemplate ? "last" : "mac_codex";
     syncCreateMode();
+    setInterval(() => {
+      if (!$("#book-panel").hidden) refreshBooks();
+    }, 4000);
     boot();
   </script>
 </body>

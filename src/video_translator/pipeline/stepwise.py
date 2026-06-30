@@ -72,6 +72,7 @@ TODO_ITEMS = [
     ("P1", "为下载、翻译和 TTS 增加统一重试、退避和断点恢复"),
     ("P1", "增加说话人分离和多角色音色映射"),
     ("P1", "为 Web/API 增加任务取消"),
+    ("P1", "为扫描版 PDF 增加 OCR，并支持复杂彩色版面的背景修复"),
     ("P2", "增加可选口型同步"),
     ("P2", "把本地 JSON/线程池替换为数据库和分布式任务队列"),
     ("P2", "增加中间文件过期清理、指标和质量评估报告"),
@@ -255,6 +256,16 @@ class StepwiseVideoTranslationPipeline:
             manifest.segments_path = None
         if index <= STEP_ORDER.index(PipelineStep.translate):
             manifest.subtitle_path = None
+        if (
+            step == PipelineStep.translate
+            and manifest.segments_path
+            and Path(manifest.segments_path).is_file()
+        ):
+            segments = self._load_segments(manifest)
+            for segment in segments:
+                segment.translated_text = None
+                segment.tts_file = None
+            self._write_segments(manifest, segments)
         if index <= STEP_ORDER.index(PipelineStep.align):
             manifest.dub_audio_path = None
         if index <= STEP_ORDER.index(PipelineStep.mux):
@@ -401,6 +412,10 @@ class StepwiseVideoTranslationPipeline:
             segments,
             target_language=manifest.options.target_language,
             glossary=manifest.options.glossary,
+            on_batch_completed=lambda current: self._write_segments(
+                manifest,
+                current,
+            ),
         )
         self._write_segments(manifest, segments)
         subtitles = write_srt(

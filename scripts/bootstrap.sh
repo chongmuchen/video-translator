@@ -44,9 +44,9 @@ fi
 
 .venv/bin/python -m pip install --upgrade pip
 if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
-  .venv/bin/python -m pip install -e ".[all,dev,mac]"
+  .venv/bin/python -m pip install -e ".[all,books,dev,mac]"
 else
-  .venv/bin/python -m pip install -e ".[all,dev]"
+  .venv/bin/python -m pip install -e ".[all,books,dev]"
 fi
 
 # Fetch a project-local ffmpeg/ffprobe only when the machine has neither.

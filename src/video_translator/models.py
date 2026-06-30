@@ -16,6 +16,9 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+UNCLEAR_TRANSCRIPT_TEXT = "【原音不清，未能可靠识别】"
+
+
 class JobStatus(str, Enum):
     queued = "queued"
     downloading = "downloading"
@@ -43,6 +46,9 @@ class Segment(BaseModel):
     translated_text: str | None = None
     speaker: str | None = None
     tts_file: str | None = None
+    raw_source_text: str | None = None
+    asr_confidence: float | None = Field(default=None, ge=0, le=1)
+    asr_unclear: bool = False
 
     @property
     def duration(self) -> float:
@@ -95,6 +101,11 @@ class RuntimeSettingsUpdate(BaseModel):
         "float16",
         "float32",
     ] | None = None
+    asr_unclear_threshold: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
 
     translator_provider: TranslatorProvider | None = None
     translator_base_url: str | None = None
@@ -108,6 +119,12 @@ class RuntimeSettingsUpdate(BaseModel):
     translation_batch_size: int | None = Field(default=None, ge=1, le=100)
     translator_codex_bin: str | None = None
     translator_codex_model: str | None = None
+    translator_codex_strategy: Literal[
+        "economy",
+        "balanced",
+        "quality",
+        "account_default",
+    ] | None = None
 
     tts_provider: Literal["edge", "http", "cosyvoice"] | None = None
     tts_voice: str | None = None

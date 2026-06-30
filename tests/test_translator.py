@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from video_translator.errors import PipelineError
-from video_translator.models import Segment
+from video_translator.models import Segment, UNCLEAR_TRANSCRIPT_TEXT
 from video_translator.pipeline import translator as translator_module
 from video_translator.pipeline.translator import (
     SegmentTranslator,
@@ -92,6 +92,10 @@ def test_codex_cli_translation_uses_safe_structured_exec(
     assert "--ignore-user-config" in command
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert command[command.index("--model") + 1] == "gpt-test"
+    assert (
+        command[command.index("--config") + 1]
+        == 'model_reasoning_effort="medium"'
+    )
     assert command[-1] == "-"
     assert captured["check"] is False
     assert segments[0].translated_text == "你好"
@@ -119,3 +123,31 @@ def test_cloud_provider_defaults(
 
     assert settings.translator_base_url == base_url
     assert settings.translator_model == model
+
+
+def test_unclear_segments_are_not_sent_for_translation(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        translator_provider="passthrough",
+    )
+    segments = [
+        Segment(
+            index=0,
+            start=0,
+            end=1,
+            source_text=UNCLEAR_TRANSCRIPT_TEXT,
+            raw_source_text="garbled",
+            asr_unclear=True,
+        )
+    ]
+
+    SegmentTranslator(settings, logging.getLogger("test")).translate(
+        segments,
+        target_language="简体中文",
+        glossary={},
+    )
+
+    assert segments[0].translated_text == UNCLEAR_TRANSCRIPT_TEXT

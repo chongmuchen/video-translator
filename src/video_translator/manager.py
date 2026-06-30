@@ -33,6 +33,26 @@ class JobManager:
         metadata: dict | None = None,
     ) -> JobManifest:
         manifest = self.store.create(source, options)
+        return self.submit_existing(
+            manifest,
+            settings=settings,
+            metadata=metadata,
+        )
+
+    def submit_existing(
+        self,
+        manifest: JobManifest,
+        *,
+        settings: Settings | None = None,
+        metadata: dict | None = None,
+    ) -> JobManifest:
+        """Submit an already-created task to the full pipeline.
+
+        Keeping task creation separate from background execution makes the
+        manifest, log path, and local directory visible immediately, even when
+        the first network step later fails.
+        """
+
         if metadata:
             manifest.metadata.update(metadata)
             self.store.save(manifest)

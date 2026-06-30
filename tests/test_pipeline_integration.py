@@ -41,8 +41,11 @@ class FakeTranslator:
         *,
         target_language: str,
         glossary: dict[str, str],
+        on_batch_completed=None,
     ) -> list[Segment]:
         segments[0].translated_text = "你好，世界。"
+        if on_batch_completed:
+            on_batch_completed(segments)
         return segments
 
 

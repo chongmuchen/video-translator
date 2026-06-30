@@ -1,5 +1,6 @@
 PYTHON := .venv/bin/python
 CLI := .venv/bin/video-translator
+BOOK_CLI := .venv/bin/book-translator
 
 # Usage:
 #   make list URL='https://www.bilibili.com/video/BV.../'
@@ -21,6 +22,7 @@ ASR_BACKEND ?= faster_whisper
 ASR_MODEL ?= small
 ASR_DEVICE ?= auto
 ASR_COMPUTE_TYPE ?= auto
+ASR_UNCLEAR_THRESHOLD ?= 0.45
 SOURCE_LANGUAGE ?=
 TARGET_LANGUAGE ?= 简体中文
 TRANSLATOR_PROVIDER ?= openai_compatible
@@ -41,9 +43,10 @@ TRANSLATOR_BASE_URL ?= $(TRANSLATOR_DEFAULT_BASE_URL)
 TRANSLATOR_MODEL ?= $(TRANSLATOR_DEFAULT_MODEL)
 TRANSLATOR_API_KEY ?=
 TRANSLATOR_TIMEOUT_SECONDS ?= 180
-TRANSLATION_BATCH_SIZE ?= 12
+TRANSLATION_BATCH_SIZE ?= $(if $(filter codex_cli,$(TRANSLATOR_PROVIDER)),48,12)
 TRANSLATOR_CODEX_BIN ?= codex
 TRANSLATOR_CODEX_MODEL ?=
+TRANSLATOR_CODEX_STRATEGY ?= balanced
 TRANSLATE_ARGS ?=
 GLOSSARY ?=
 TTS_PROVIDER ?= edge
@@ -66,6 +69,12 @@ ENABLE_DEMUCS ?= false
 MUX_ARGS ?=
 SLEEP_BETWEEN ?= 2
 PODCAST_ARGS ?= --list-only
+BOOK_FILE ?=
+BOOK_ID ?=
+BOOK_MODE ?= translated_only
+BOOK_PROVIDER ?= codex_cli
+BOOK_CODEX_STRATEGY ?= quality
+BOOK_ARGS ?=
 
 ifeq ($(strip $(PARTS)),)
 COLLECTION_SELECTION := --all
@@ -85,7 +94,7 @@ DOWNLOAD_ARGS = --download-backend "$(DOWNLOAD_BACKEND)" \
 	$(if $(strip $(DOWNLOAD_PROXY)),--proxy "$(DOWNLOAD_PROXY)",) \
 	$(if $(strip $(DOWNLOAD_IMPERSONATE)),--impersonate "$(DOWNLOAD_IMPERSONATE)",)
 
-.PHONY: help bootstrap doctor test plan run web auto clean list download download-one podcast extract transcribe translate synthesize align mux next resume status
+.PHONY: help bootstrap doctor test plan run web auto clean list download download-one podcast extract transcribe translate synthesize align mux next resume status book-run book-import book-extract book-translate book-render book-status
 
 help:
 	@echo "Video Translator"
@@ -136,6 +145,13 @@ help:
 	@echo "  make web"
 	@echo "  浏览器打开 http://127.0.0.1:8000"
 	@echo
+	@echo "PDF / EPUB 书籍翻译："
+	@echo "  make book-run BOOK_FILE='/path/book.pdf' BOOK_MODE=translated_only"
+	@echo "  make book-import BOOK_FILE='/path/book.epub'"
+	@echo "  make book-extract BOOK_ID='任务ID'"
+	@echo "  make book-translate BOOK_ID='任务ID' BOOK_PROVIDER=codex_cli BOOK_CODEX_STRATEGY=quality"
+	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=bilingual"
+	@echo
 	@echo "登录内容可追加："
 	@echo "  COOKIES_FROM_BROWSER=chrome DOWNLOAD_IMPERSONATE=chrome"
 
@@ -164,6 +180,7 @@ auto:
 	VT_ASR_MODEL="$(ASR_MODEL)" \
 	VT_ASR_DEVICE="$(ASR_DEVICE)" \
 	VT_ASR_COMPUTE_TYPE="$(ASR_COMPUTE_TYPE)" \
+	VT_ASR_UNCLEAR_THRESHOLD="$(ASR_UNCLEAR_THRESHOLD)" \
 	VT_TRANSLATOR_PROVIDER="$(TRANSLATOR_PROVIDER)" \
 	VT_TRANSLATOR_BASE_URL="$(TRANSLATOR_BASE_URL)" \
 	VT_TRANSLATOR_MODEL="$(TRANSLATOR_MODEL)" \
@@ -172,6 +189,7 @@ auto:
 	VT_TRANSLATION_BATCH_SIZE="$(TRANSLATION_BATCH_SIZE)" \
 	VT_TRANSLATOR_CODEX_BIN="$(TRANSLATOR_CODEX_BIN)" \
 	VT_TRANSLATOR_CODEX_MODEL="$(TRANSLATOR_CODEX_MODEL)" \
+	VT_TRANSLATOR_CODEX_STRATEGY="$(TRANSLATOR_CODEX_STRATEGY)" \
 	VT_TTS_PROVIDER="$(TTS_PROVIDER)" \
 	VT_TTS_VOICE="$(TTS_VOICE)" \
 	VT_TTS_RATE="$(TTS_RATE)" \
@@ -220,6 +238,45 @@ podcast:
 		(echo "错误：缺少 URL。用法：make podcast URL='https://podcasts.apple.com/.../id123'" >&2; exit 2)
 	$(PYTHON) scripts/download_apple_podcast.py "$(URL)" $(PODCAST_ARGS)
 
+book-run:
+	@test -n "$(strip $(BOOK_FILE))" || \
+		(echo "错误：缺少 BOOK_FILE。" >&2; exit 2)
+	VT_TRANSLATOR_API_KEY="$(TRANSLATOR_API_KEY)" \
+	$(BOOK_CLI) run "$(BOOK_FILE)" \
+		--mode "$(BOOK_MODE)" \
+		--target-language "$(TARGET_LANGUAGE)" \
+		--provider "$(BOOK_PROVIDER)" \
+		--codex-strategy "$(BOOK_CODEX_STRATEGY)" \
+		$(GLOSSARY_ARG) $(BOOK_ARGS)
+
+book-import:
+	@test -n "$(strip $(BOOK_FILE))" || \
+		(echo "错误：缺少 BOOK_FILE。" >&2; exit 2)
+	$(BOOK_CLI) import "$(BOOK_FILE)" --mode "$(BOOK_MODE)"
+
+book-extract:
+	@test -n "$(strip $(BOOK_ID))" || \
+		(echo "错误：缺少 BOOK_ID。" >&2; exit 2)
+	$(BOOK_CLI) extract "$(BOOK_ID)"
+
+book-translate:
+	@test -n "$(strip $(BOOK_ID))" || \
+		(echo "错误：缺少 BOOK_ID。" >&2; exit 2)
+	VT_TRANSLATOR_API_KEY="$(TRANSLATOR_API_KEY)" \
+	$(BOOK_CLI) translate "$(BOOK_ID)" \
+		--target-language "$(TARGET_LANGUAGE)" \
+		--provider "$(BOOK_PROVIDER)" \
+		--codex-strategy "$(BOOK_CODEX_STRATEGY)" \
+		$(GLOSSARY_ARG) $(BOOK_ARGS)
+
+book-render:
+	@test -n "$(strip $(BOOK_ID))" || \
+		(echo "错误：缺少 BOOK_ID。" >&2; exit 2)
+	$(BOOK_CLI) render "$(BOOK_ID)" --mode "$(BOOK_MODE)"
+
+book-status:
+	$(BOOK_CLI) status $(BOOK_ID)
+
 extract:
 	@test -n "$(strip $(JOB_ID))" || \
 		(echo "错误：缺少 JOB_ID。用法：make extract JOB_ID='下载命令返回的任务ID'" >&2; exit 2)
@@ -232,6 +289,7 @@ transcribe:
 	VT_ASR_MODEL="$(ASR_MODEL)" \
 	VT_ASR_DEVICE="$(ASR_DEVICE)" \
 	VT_ASR_COMPUTE_TYPE="$(ASR_COMPUTE_TYPE)" \
+	VT_ASR_UNCLEAR_THRESHOLD="$(ASR_UNCLEAR_THRESHOLD)" \
 	VT_SOURCE_LANGUAGE="$(SOURCE_LANGUAGE)" \
 	$(PYTHON) main.py step "$(JOB_ID)" transcribe $(TRANSCRIBE_ARGS)
 
@@ -246,6 +304,7 @@ translate:
 	VT_TRANSLATION_BATCH_SIZE="$(TRANSLATION_BATCH_SIZE)" \
 	VT_TRANSLATOR_CODEX_BIN="$(TRANSLATOR_CODEX_BIN)" \
 	VT_TRANSLATOR_CODEX_MODEL="$(TRANSLATOR_CODEX_MODEL)" \
+	VT_TRANSLATOR_CODEX_STRATEGY="$(TRANSLATOR_CODEX_STRATEGY)" \
 	$(PYTHON) main.py step "$(JOB_ID)" translate \
 		--target-language "$(TARGET_LANGUAGE)" \
 		$(GLOSSARY_ARG) $(TRANSLATE_ARGS)

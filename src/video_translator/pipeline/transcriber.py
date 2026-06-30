@@ -7,7 +7,7 @@ from typing import Iterable
 import wave
 
 from ..errors import ConfigurationError
-from ..models import Segment
+from ..models import Segment, UNCLEAR_TRANSCRIPT_TEXT
 from ..settings import Settings
 
 
@@ -24,6 +24,75 @@ MLX_MODEL_ALIASES = {
     "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
     "turbo": "mlx-community/whisper-large-v3-turbo",
 }
+
+
+def asr_segment_confidence(raw) -> float | None:
+    """Estimate a comparable confidence from Whisper word/token metadata."""
+
+    words = (
+        raw.get("words", [])
+        if isinstance(raw, dict)
+        else getattr(raw, "words", [])
+    ) or []
+    probabilities = []
+    for word in words:
+        value = (
+            word.get("probability")
+            if isinstance(word, dict)
+            else getattr(word, "probability", None)
+        )
+        if value is not None:
+            probabilities.append(float(value))
+    confidence = None
+    if probabilities:
+        confidence = sum(probabilities) / len(probabilities)
+
+    avg_logprob = (
+        raw.get("avg_logprob")
+        if isinstance(raw, dict)
+        else getattr(raw, "avg_logprob", None)
+    )
+    if confidence is None and avg_logprob is not None:
+        import math
+
+        confidence = math.exp(float(avg_logprob))
+    no_speech_probability = (
+        raw.get("no_speech_prob")
+        if isinstance(raw, dict)
+        else getattr(raw, "no_speech_prob", None)
+    )
+    if no_speech_probability is not None:
+        speech_confidence = 1.0 - float(no_speech_probability)
+        confidence = (
+            speech_confidence
+            if confidence is None
+            else min(confidence, speech_confidence)
+        )
+    if confidence is None:
+        return None
+    return max(0.0, min(1.0, confidence))
+
+
+def make_asr_segment(
+    *,
+    index: int,
+    start: float,
+    end: float,
+    text: str,
+    raw,
+    unclear_threshold: float,
+) -> Segment:
+    confidence = asr_segment_confidence(raw)
+    unclear = confidence is not None and confidence < unclear_threshold
+    return Segment(
+        index=index,
+        start=max(0.0, start),
+        end=max(end, start + 0.05),
+        source_text=UNCLEAR_TRANSCRIPT_TEXT if unclear else text,
+        raw_source_text=text if unclear else None,
+        asr_confidence=confidence,
+        asr_unclear=unclear,
+    )
 
 
 def mlx_model_name(model: str) -> str:
@@ -53,6 +122,8 @@ def merge_segments(
             0 <= gap <= max_gap
             and segment.end - previous.start <= max_duration
             and len(combined_text) <= max_chars
+            and not previous.asr_unclear
+            and not segment.asr_unclear
             and not previous.source_text.rstrip().endswith((".", "!", "?", "。", "！", "？"))
         )
         if can_merge:
@@ -127,11 +198,13 @@ class FasterWhisperTranscriber:
             if not text:
                 continue
             segments.append(
-                Segment(
+                make_asr_segment(
                     index=index,
-                    start=max(0.0, float(raw.start)),
-                    end=max(float(raw.end), float(raw.start) + 0.05),
-                    source_text=text,
+                    start=float(raw.start),
+                    end=float(raw.end),
+                    text=text,
+                    raw=raw,
+                    unclear_threshold=self.settings.asr_unclear_threshold,
                 )
             )
         segments = merge_segments(segments)
@@ -210,11 +283,13 @@ class MlxWhisperTranscriber:
             start = max(0.0, float(raw.get("start") or 0.0))
             end = max(float(raw.get("end") or start), start + 0.05)
             segments.append(
-                Segment(
+                make_asr_segment(
                     index=index,
                     start=start,
                     end=end,
-                    source_text=text,
+                    text=text,
+                    raw=raw,
+                    unclear_threshold=self.settings.asr_unclear_threshold,
                 )
             )
         segments = merge_segments(segments)

@@ -7,6 +7,7 @@ import re
 import threading
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .errors import PipelineError
 from .models import JobManifest, JobStatus, PipelineOptions, utc_now
@@ -26,6 +27,39 @@ def safe_job_title(title: str) -> str:
         flags=re.UNICODE,
     )
     return cleaned.strip("-._")[:60] or "untitled"
+
+
+def initial_job_title(source: str) -> str:
+    """Return a readable placeholder before the real media title is known."""
+
+    if "://" not in source:
+        path = Path(source).expanduser()
+        hint = path.stem or path.name or "local-media"
+        return safe_job_title(f"待处理-{hint}")
+
+    parsed = urlparse(source.strip())
+    host = (parsed.hostname or "remote").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    parts = [host]
+
+    path_parts = [
+        unquote(part)
+        for part in parsed.path.split("/")
+        if part and part not in {"video", "watch"}
+    ]
+    if path_parts:
+        parts.append(path_parts[-1])
+
+    query = parse_qs(parsed.query)
+    if query.get("v"):
+        parts.append(query["v"][0])
+    if query.get("p"):
+        parts.append(f"p{query['p'][0]}")
+    if query.get("i"):
+        parts.append(f"i{query['i'][0]}")
+
+    return safe_job_title("待下载-" + "-".join(parts))
 
 
 class JobStore:
@@ -55,7 +89,10 @@ class JobStore:
     ) -> JobManifest:
         with self._lock:
             job_id = uuid.uuid4().hex
-            self.job_dir(job_id).mkdir(parents=True)
+            job_dir = self.settings.jobs_dir / (
+                f"{initial_job_title(source)}--{job_id}"
+            )
+            job_dir.mkdir(parents=True)
             manifest = JobManifest(
                 id=job_id,
                 source=source,
