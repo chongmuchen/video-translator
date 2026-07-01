@@ -151,3 +151,35 @@ def test_unclear_segments_are_not_sent_for_translation(
     )
 
     assert segments[0].translated_text == UNCLEAR_TRANSCRIPT_TEXT
+
+
+def test_translator_retries_transient_pipeline_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        translator_provider="codex_cli",
+        translator_retries=1,
+        translator_retry_backoff_seconds=0,
+    )
+    translator = SegmentTranslator(settings, logging.getLogger("test"))
+    calls = 0
+
+    def fake_codex(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PipelineError("temporary timeout")
+        return '{"segments":[{"id":0,"text":"你好"}]}'
+
+    monkeypatch.setattr(translator, "_translate_with_codex", fake_codex)
+
+    result = translator.complete_json(
+        system_prompt="system",
+        user_prompt="user",
+    )
+
+    assert result == {"segments": [{"id": 0, "text": "你好"}]}
+    assert calls == 2

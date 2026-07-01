@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     translator_model: str = DEFAULT_TRANSLATOR_MODEL
     translator_api_key: str | None = None
     translator_timeout_seconds: float = 180
+    translator_retries: int = 2
+    translator_retry_backoff_seconds: float = 3.0
     translation_batch_size: int = 12
     translator_codex_bin: str = "codex"
     translator_codex_model: str | None = None

@@ -21,6 +21,7 @@ from .media import (
     extract_speech_audio,
     has_audio_stream,
     has_video_stream,
+    mux_audio,
     mux_video,
     normalize_tts_segments,
     probe_duration,
@@ -60,14 +61,12 @@ STEP_DESCRIPTIONS = {
     PipelineStep.translate: "调用 LLM 翻译，并生成中文字幕",
     PipelineStep.synthesize: "逐句生成中文语音",
     PipelineStep.align: "将中文语音适配到原视频时间轴",
-    PipelineStep.mux: "压低原声、混音并封装字幕和双音轨 MP4",
+    PipelineStep.mux: "压低原声、混音并封装双音轨 MP4/M4A",
 }
 
 # TODO: These are intentionally visible through ``python main.py plan``.
 TODO_ITEMS = [
-    ("P0", "用用户授权的 2 个 B站视频和 1 个 YouTube 视频验收下载"),
     ("P0", "接通 Ollama/兼容 LLM，验证真实翻译和术语表"),
-    ("P1", "为 Apple Podcasts/纯音频封装中文混音 + 原声双音轨 M4A"),
     ("P1", "翻译过长时自动缩写并重新生成 TTS，而不是最终裁尾"),
     ("P1", "为下载、翻译和 TTS 增加统一重试、退避和断点恢复"),
     ("P1", "增加说话人分离和多角色音色映射"),
@@ -140,10 +139,10 @@ STEP_DONE_MESSAGES = {
 }
 
 
-def safe_output_name(title: str, job_id: str) -> str:
+def safe_output_name(title: str, job_id: str, suffix: str = ".mp4") -> str:
     cleaned = re.sub(r"[^\w\u4e00-\u9fff.-]+", "-", title, flags=re.UNICODE)
     cleaned = cleaned.strip("-._")[:80] or "translated-video"
-    return f"{cleaned}-{job_id[:8]}.mp4"
+    return f"{cleaned}-{job_id[:8]}{suffix}"
 
 
 class StepwiseVideoTranslationPipeline:
@@ -472,15 +471,17 @@ class StepwiseVideoTranslationPipeline:
     ) -> None:
         media = resolve_media_binaries(self.settings)
         source = self._source_path(manifest)
-        if manifest.metadata.get("media_kind") == "audio":
-            raise PipelineError(
-                "Apple Podcasts/纯音频目前已支持下载、提取、转写、翻译、"
-                "中文 TTS 和对齐，但最终双音轨音频封装尚未实现。"
-                "中文字幕和 dub-timeline.wav 已保留；该能力已加入 TODO。"
-            )
         if not manifest.dub_audio_path or not Path(manifest.dub_audio_path).is_file():
             raise PipelineError("缺少完整配音时间轴，请先执行 align。")
-        if not manifest.subtitle_path or not Path(manifest.subtitle_path).is_file():
+
+        is_audio_only = manifest.metadata.get("media_kind") == "audio"
+        if (
+            not is_audio_only
+            and (
+                not manifest.subtitle_path
+                or not Path(manifest.subtitle_path).is_file()
+            )
+        ):
             raise PipelineError("缺少中文字幕，请先执行 translate。")
 
         background_audio: Path | None = None
@@ -521,6 +522,28 @@ class StepwiseVideoTranslationPipeline:
                 total_duration=self._total_duration(manifest, media),
                 sample_rate=self.settings.dub_sample_rate,
             )
+        if is_audio_only:
+            output = self.settings.outputs_dir / safe_output_name(
+                manifest.title or "audio",
+                manifest.id,
+                suffix=".m4a",
+            )
+            mux_audio(
+                source,
+                Path(manifest.dub_audio_path),
+                output,
+                settings=self.settings,
+                media=media,
+                keep_original_audio=keep_original,
+                duck_original_audio=duck_original,
+                background_audio=background_audio,
+                duck_control_audio=duck_control_audio,
+                logger=logger,
+            )
+            manifest.output_path = str(output)
+            self.store.save(manifest)
+            return
+
         output = self.settings.outputs_dir / safe_output_name(
             manifest.title or "video",
             manifest.id,

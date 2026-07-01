@@ -133,7 +133,7 @@ def print_job(manifest: JobManifest, pipeline: StepwiseVideoTranslationPipeline)
     if manifest.dub_audio_path:
         print(f"配音时间轴: {manifest.dub_audio_path}")
     if manifest.output_path:
-        print(f"最终视频:   {manifest.output_path}")
+        print(f"最终输出:   {manifest.output_path}")
     if manifest.error:
         print(f"错误:       {manifest.error}")
     if next_step:

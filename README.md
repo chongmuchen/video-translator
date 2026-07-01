@@ -180,8 +180,10 @@ make mux JOB_ID='任务ID'
 | `TRANSLATOR_BASE_URL` | 按 provider | Kimi、MiniMax、DeepSeek 会自动使用官方中国区预设；通用接口和 Ollama 可自行修改。 |
 | `TRANSLATOR_MODEL` | 按 provider | 厂商选项会带推荐模型；仍可传入其他可用模型。 |
 | `TRANSLATOR_API_KEY` | 空 | Codex CLI/Ollama 留空；云服务按需填写。网页模板可将它保存到 macOS 钥匙串，任务文件和接口响应均不含明文。 |
-| `TRANSLATOR_TIMEOUT_SECONDS` | `180` | 本地模型慢时可提高。 |
-| `TRANSLATION_BATCH_SIZE` | Codex `48`，其他 `12` | Codex Plus 推荐用较大批次减少调用次数；接口超时或输出漏项时调小。 |
+| `TRANSLATOR_TIMEOUT_SECONDS` | `180` | 长播客用 Codex CLI 时建议提高到 `300`～`600`；网页翻译步骤也可直接设置。 |
+| `TRANSLATOR_RETRIES` | `2` | 翻译批次失败自动重试次数；超时、网络错误或无效 JSON 会重试，配置错误不会重试。 |
+| `TRANSLATOR_RETRY_BACKOFF_SECONDS` | `3` | 首次重试等待秒数，后续按指数退避，例如 3、6、12 秒。 |
+| `TRANSLATION_BATCH_SIZE` | Codex `48`，其他 `12` | Codex Plus 推荐用较大批次减少调用次数；接口超时或输出漏项时调小到 `24` 或 `12`。 |
 | `TRANSLATOR_CODEX_BIN` | `codex` | Codex CLI 命令或绝对路径。 |
 | `TRANSLATOR_CODEX_STRATEGY` | `balanced` | `economy`=`gpt-5.4-mini`/低推理，`balanced`=`gpt-5.4-mini`/中推理，`quality`=`gpt-5.5`/中推理；书籍默认 `quality`。 |
 | `TRANSLATOR_CODEX_MODEL` | 空 | 仅 Codex CLI 使用；填写后覆盖策略所选模型。一般保持空。 |
@@ -205,8 +207,20 @@ make mux JOB_ID='任务ID'
 | `BURN_SUBTITLES` | `false` | 推荐软字幕；播放器兼容性不好时再烧录。 |
 | `ENABLE_DEMUCS` | `false` | 实验性且耗时，确认安装 Demucs 后再启用。 |
 
-每一步正常重复执行会自动跳过。需要覆盖旧结果时，对应的
+每一步正常重复执行会自动跳过或从缺失部分继续。需要覆盖旧结果时，对应的
 `*_ARGS` 传 `--force`；它会让该步骤之后的任务状态失效并要求重新执行。
+
+继续/重试规则：
+
+- 不带 `--force`：复用已经完成的前置步骤和本地文件。例如翻译失败后再执行
+  `make translate`，会保留 `segments.json` 里已有译文，只翻译还没有
+  `translated_text` 的片段。
+- 只调整 `TRANSLATION_BATCH_SIZE` 或 `TRANSLATOR_TIMEOUT_SECONDS`：适合不带
+  `--force` 继续，常用于长播客 Codex 超时。
+- 修改目标语言、术语表、翻译模型或翻译提供方：建议加 `TRANSLATE_ARGS='--force'`，
+  否则可能出现前半段旧参数、后半段新参数的混合译文。
+- 强制重跑某一步会清掉该步骤及后续步骤状态。例如强制重跑 `transcribe` 后，
+  `translate/synthesize/align/mux` 都需要重新执行。
 
 ## 1. 当前开发进度
 
@@ -220,7 +234,7 @@ make mux JOB_ID='任务ID'
 |---|---:|---|---|---|
 | 本地媒体输入 | ✅ | CLI 复制常见视频及 MP3/M4A/AAC/WAV/FLAC/OGG/OPUS | 视频端到端及纯音频 download→extract 集成测试 | 不同编码和超长媒体 |
 | YouTube/B站输入 | 🟡 | `yt-dlp`、Deno、Cookies、域名和时长限制 | URL 安全单元测试 | 使用已授权真实链接人工验收 |
-| Apple Podcasts | 🟡 | Apple Lookup API→发布者 RSS；支持列目录、最新 N 集、指定集和全集下载 | 真实节目成功读取 359 集 RSS；本地音频提取测试 | 纯音频最终双音轨 M4A 封装 |
+| Apple Podcasts | 🟡 | Apple Lookup API→发布者 RSS；支持列目录、最新 N 集、指定集、全集下载，以及纯音频中文混音/原声双音轨 M4A 输出 | 真实节目成功读取 359 集 RSS；本地音频提取测试；纯音频 M4A 封装集成测试 | 更长节目和更多播放器兼容性 |
 | 音频提取 | ✅ | FFmpeg 输出 16 kHz 单声道 WAV | 真实 FFmpeg 集成测试 | 无音轨、损坏媒体等异常样本 |
 | 语音识别 | 🟡 | 可选 MLX Apple GPU 或 faster-whisper CPU/CUDA；词级时间戳、片段合并、低置信度特殊占位及原始候选保留；占位时间槽不朗读猜测内容 | 两个适配器和模糊片段静音自动化测试；本机 MLX/Metal tiny.en 真实推理通过 | `large-v3` 质量、阈值与长视频性能 |
 | 中文翻译 | 🟡 | Codex CLI、Ollama、Kimi、MiniMax、DeepSeek 和通用 OpenAI-compatible 接口；Plus 分档、批次上下文、术语表和逐批断点 | JSON/ID/断点校验、云端预设、Codex CLI 真实短句翻译 | 仍需用完整长视频人工评价译文质量 |
@@ -234,7 +248,7 @@ make mux JOB_ID='任务ID'
 | CLI | ✅ | 原 CLI 加根目录 `main.py`：批量下载、分步执行、状态、断点恢复、完整运行 | 冒烟测试及本地 download→extract 验证 | 更完善的交互式界面 |
 | Web/API | ✅ | 视频/书籍任务列表、模板自动执行、钥匙串密钥、参数说明、日志、片段预览和输出下载 | API 自动化测试、真实历史任务加载 | 任务取消和合集批量操作 |
 | EPUB 书籍翻译 | 🟡 | 按 spine 抽取、逐批翻译、保留图片/CSS/链接；纯译文或段落双语；重建导航文本 | 含图片和目录链接的 EPUB 自动化测试 | 大型复杂 EPUB 与不同阅读器人工验收 |
-| PDF 书籍翻译 | 🟡 | 固定页数覆盖排版、保留原页图片、宋体嵌入、纯译文或块内双语、目录标题更新 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 扫描件 OCR、复杂彩色背景和极端密排页面 |
+| PDF 书籍翻译 | 🟡 | 内置固定页数覆盖排版、保留原页图片、中文字体嵌入、纯译文或块内双语、目录标题更新；复杂 PDF 计划接入 BabelDOC/PDFMathTranslate 外部引擎 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 扫描件 OCR、复杂彩色背景、极端密排页面，以及外部 PDF 引擎集成 |
 | 书籍中间缓存 | ✅ | 导入→抽取→翻译→排版独立执行；文本块、译文哈希和逐批断点长期保留 | 改排版模式不重复翻译的自动化测试 | 缓存清理和版本迁移工具 |
 | 任务状态与日志 | ✅ | 单机 JSON manifest、每任务日志和中间文件 | JobStore 单元测试 | 数据库、恢复和分布式队列 |
 | 多说话人/多音色 | ⬜ | 尚未实现 | — | diarization、说话人到音色映射 |
@@ -839,14 +853,17 @@ make web
 - 翻译页可选 Codex CLI、Ollama、Kimi、MiniMax、DeepSeek 或自定义兼容接口；
 - “翻译 PDF / EPUB”可上传书籍，选择纯译文或原文/译文相邻排版，一键或分步执行；
 - 每个步骤都显示参数含义、默认值、推荐值和等价 Make 命令；
-- 页面可以查看任务目录、`manifest.json`、`pipeline.log`、中间产物路径、最终
-  MP4 下载入口和带起止时间的识别片段；
+- 页面可以查看任务目录、`manifest.json`、`pipeline.log`、每一步进度、
+  继续/强制重跑规则、中间产物路径、最终下载入口和带起止时间的识别片段；
+- 页面左侧可开关“任务完成叮一声”，默认开启；设置只保存在当前浏览器；
 - API 默认只监听 `127.0.0.1`，任务和媒体文件保存在本机。
 
 注意：当前后台执行器仍是 Web 服务进程内的线程池。重启 `make web` 会中断正在
 运行的下载、翻译或排版线程；已经写入 `manifest.json`、`segments.json`、
-`blocks.json` 和输出文件的中间结果会保留。视频任务可从失败步骤继续，书籍任务
-可点击“继续完成全部”或重新执行翻译步骤，已翻译且缓存键未变化的文本块会跳过。
+`blocks.json` 和输出文件的中间结果会保留。视频任务可从失败步骤继续；翻译步骤
+会保留 `segments.json` 中已有译文，只处理未翻译片段。书籍任务可点击
+“继续完成全部”或重新执行翻译步骤，已翻译且缓存键未变化的文本块会跳过。页面会
+在任务详情中显示当前属于“继续”还是“强制重跑”。
 
 当前网页覆盖的步骤：
 
@@ -1008,12 +1025,31 @@ make book-status BOOK_ID='书籍任务ID'
 
 - EPUB 按 OPF spine 读取章节，保留原图、CSS、资源和内部链接；目录使用链接而非
   固定页码，翻译目录标题后仍指向原章节位置；
-- PDF 保持原页尺寸和页数，在原文本区域内重新排中文，图片留在原页；默认嵌入
-  macOS 宋体作为印刷正文，PDF outline 目录标题会随译文更新；
+- 内置 PDF 引擎保持原页尺寸和页数，在原文本区域内重新排中文，图片留在原页；
+  在 macOS 上优先使用 Hiragino Sans GB / Heiti 等可读中文字体，PDF outline
+  目录标题会随译文更新；
 - 因 PDF 采用固定页数，原页码不会发生漂移；内容过密无法在最低字号内装下时，
   任务 metadata 会记录 `layout_warnings`，应人工检查对应页面；
 - 扫描版 PDF 当前没有 OCR；复杂彩色背景、环绕图文和多栏学术排版仍需人工校样。
   严谨出版的最终版本应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
+
+PDF 开源排版引擎调研：
+
+- [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)：
+  Python 项目，定位是保留公式、图表、目录和注释的 PDF 翻译，提供命令行、UI
+  和 Docker。README 中的本地命令行示例是 `uv tool install --python 3.12 pdf2zh`
+  后执行 `pdf2zh document.pdf`。它适合优先作为“高质量 PDF 引擎”接入。
+- [BabelDOC](https://github.com/funstory-ai/BabelDOC)：同样是保留版式的文档翻译
+  方向，可作为候选评估。当前项目尚未封装它的命令参数，避免在未验收前误导使用。
+
+后续集成建议：网页新增 PDF 引擎选项：
+
+```text
+内置快速引擎（当前） / PDFMathTranslate 高质量引擎 / BabelDOC 实验引擎
+```
+
+高质量引擎可以直接从原 PDF 生成译本，适合复杂图文书；但它会有自己的翻译调用方式，
+不一定能直接复用本项目已经翻译好的 `blocks.json`，需要单独做适配和缓存策略。
 
 最小验收顺序：
 
@@ -1460,11 +1496,12 @@ make transcribe \
 当前纯音频已经支持：
 
 ```text
-download → extract → transcribe → translate → synthesize → align
+download → extract → transcribe → translate → synthesize → align → mux
 ```
 
-最后的纯音频“双音轨 M4A”封装尚未实现；执行 `mux` 时会给出明确提示。
-中文配音时间轴保存在任务目录的 `dub-timeline.wav`。
+最后的 `mux` 会输出 `.m4a`：第一条音轨是中文配音与被压低的原声混音，
+第二条音轨是可选原声。中文字幕仍作为 `zh-CN.srt` 保存在任务目录，
+因为多数播放器对 M4A 内嵌字幕支持不稳定。
 
 ## 11. 第九步：可选验证 CosyVoice
 

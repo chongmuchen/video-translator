@@ -114,7 +114,97 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 manifest.output_path and Path(manifest.output_path).is_file()
             ),
         }
+        payload["step_progress"] = job_step_progress(manifest)
         return payload
+
+    def segment_counts(manifest: JobManifest) -> dict[str, int] | None:
+        if not manifest.segments_path:
+            return None
+        path = Path(manifest.segments_path)
+        if not path.is_file():
+            return None
+        try:
+            segments = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        total = len(segments)
+        translated = sum(
+            1
+            for item in segments
+            if str(item.get("translated_text") or "").strip()
+        )
+        synthesized = sum(
+            1
+            for item in segments
+            if str(item.get("tts_file") or "").strip()
+        )
+        unclear = sum(1 for item in segments if item.get("asr_unclear"))
+        return {
+            "total": total,
+            "translated": translated,
+            "translation_pending": max(0, total - translated),
+            "synthesized": synthesized,
+            "synthesis_pending": max(0, total - synthesized),
+            "unclear": unclear,
+        }
+
+    def job_step_progress(manifest: JobManifest) -> dict:
+        counts = segment_counts(manifest)
+        return {
+            "download": {
+                "done": bool(
+                    manifest.source_path and Path(manifest.source_path).is_file()
+                ),
+            },
+            "extract": {
+                "done": bool(
+                    manifest.audio_path and Path(manifest.audio_path).is_file()
+                ),
+            },
+            "transcribe": {
+                "done": bool(
+                    manifest.segments_path
+                    and Path(manifest.segments_path).is_file()
+                ),
+                **({"segments": counts["total"]} if counts else {}),
+            },
+            "translate": {
+                "done": "translate" in manifest.completed_steps,
+                **(
+                    {
+                        "translated": counts["translated"],
+                        "pending": counts["translation_pending"],
+                        "total": counts["total"],
+                        "unclear": counts["unclear"],
+                    }
+                    if counts
+                    else {}
+                ),
+            },
+            "synthesize": {
+                "done": "synthesize" in manifest.completed_steps,
+                **(
+                    {
+                        "synthesized": counts["synthesized"],
+                        "pending": counts["synthesis_pending"],
+                        "total": counts["total"],
+                    }
+                    if counts
+                    else {}
+                ),
+            },
+            "align": {
+                "done": bool(
+                    manifest.dub_audio_path
+                    and Path(manifest.dub_audio_path).is_file()
+                ),
+            },
+            "mux": {
+                "done": bool(
+                    manifest.output_path and Path(manifest.output_path).is_file()
+                ),
+            },
+        }
 
     def settings_for(request_settings) -> Settings:
         updates = request_settings.model_dump(exclude_none=True)
@@ -193,6 +283,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def book_payload(manifest) -> dict:
         payload = manifest.public_dict()
+        book_dir = book_manager.store.job_dir(manifest.id)
+        payload["directory_name"] = book_dir.name
+        payload["directory_path"] = str(book_dir)
+        payload["manifest_path"] = str(book_dir / "book-manifest.json")
+        artifact_paths = {}
+        for key, value in {
+            "source": manifest.source_path,
+            "blocks": manifest.blocks_path,
+            "output": manifest.output_path,
+        }.items():
+            if value and Path(value).is_file():
+                artifact_paths[key] = str(Path(value))
+        payload["artifact_paths"] = artifact_paths
         payload["running"] = book_manager.is_running(manifest.id)
         payload["next_step"] = next(
             (
@@ -206,7 +309,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             manifest.output_path
             and Path(manifest.output_path).is_file()
         )
+        if payload["download_ready"]:
+            payload["download_url"] = f"/api/books/{manifest.id}/download"
+        payload["step_progress"] = book_step_progress(manifest)
+        payload["layout_warning_count"] = len(
+            manifest.metadata.get("layout_warnings", [])
+        )
         return payload
+
+    def book_step_progress(manifest) -> dict:
+        total = translated = 0
+        if manifest.blocks_path and Path(manifest.blocks_path).is_file():
+            try:
+                blocks = json.loads(
+                    Path(manifest.blocks_path).read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                blocks = []
+            total = len(blocks)
+            translated = sum(
+                1
+                for item in blocks
+                if str(item.get("translated_text") or "").strip()
+            )
+        return {
+            "extract": {
+                "done": "extract" in manifest.completed_steps,
+                "blocks": total,
+            },
+            "translate": {
+                "done": "translate" in manifest.completed_steps,
+                "translated": translated,
+                "pending": max(0, total - translated),
+                "total": total,
+            },
+            "render": {
+                "done": bool(
+                    manifest.output_path and Path(manifest.output_path).is_file()
+                ),
+                "layout_warnings": len(
+                    manifest.metadata.get("layout_warnings", [])
+                ),
+            },
+        }
 
     @app.get("/api/books")
     def list_books() -> list[dict]:
@@ -493,9 +638,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         outputs_root = runtime_settings.outputs_dir.resolve()
         if outputs_root not in output.parents or not output.is_file():
             raise HTTPException(status_code=404, detail="输出文件不存在")
+        media_type = (
+            "audio/mp4"
+            if output.suffix.lower() in {".m4a", ".mp4a"}
+            else "video/mp4"
+        )
         return FileResponse(
             output,
-            media_type="video/mp4",
+            media_type=media_type,
             filename=output.name,
         )
 

@@ -116,6 +116,12 @@ class RuntimeSettingsUpdate(BaseModel):
         ge=1,
         le=3600,
     )
+    translator_retries: int | None = Field(default=None, ge=0, le=10)
+    translator_retry_backoff_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        le=300,
+    )
     translation_batch_size: int | None = Field(default=None, ge=1, le=100)
     translator_codex_bin: str | None = None
     translator_codex_model: str | None = None

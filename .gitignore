@@ -6,12 +6,24 @@
 .venv/
 __pycache__/
 *.py[cod]
+
+# Local runtime data and generated media.
 data/jobs/*
 !data/jobs/.gitkeep
 data/outputs/*
 !data/outputs/.gitkeep
 data/collections/*
 !data/collections/.gitkeep
+data/books/jobs/*
+!data/books/jobs/.gitkeep
+data/books/outputs/*
+!data/books/outputs/.gitkeep
+data/books/uploads/*
+!data/books/uploads/.gitkeep
+
+# Scratch files from PDF rendering, inspection, and experiments.
+tmp/
+
 .runtime/
 separated/
 work/

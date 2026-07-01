@@ -29,12 +29,12 @@ def printing_font() -> Path:
     """
 
     candidates = [
-        Path("/System/Library/Fonts/ヒラギノ明朝 ProN.ttc"),
-        Path("/System/Library/Fonts/STHeiti Light.ttc"),
         Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),
+        Path("/System/Library/Fonts/STHeiti Light.ttc"),
         Path("/Library/Fonts/NotoSerifCJK-Regular.ttc"),
         Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
         Path("/usr/share/fonts/truetype/noto/NotoSerifCJK-Regular.ttc"),
+        Path("/System/Library/Fonts/ヒラギノ明朝 ProN.ttc"),
         Path("/System/Library/Fonts/Supplemental/Songti.ttc"),
     ]
     for candidate in candidates:
@@ -107,10 +107,10 @@ def _expanded_rect(
     stretch_right: bool,
 ):
     rect = fitz.Rect(block.bbox)
-    rect.x0 = max(0, rect.x0 - 1.2)
-    rect.y0 = max(0, rect.y0 - 1.0)
-    rect.x1 = min(page_rect.width, rect.x1 + 2.0)
-    rect.y1 = min(page_rect.height, rect.y1 + 2.0)
+    rect.x0 = max(0, rect.x0 - 3.5)
+    rect.y0 = max(0, rect.y0 - 2.0)
+    rect.x1 = min(page_rect.width, rect.x1 + 3.5)
+    rect.y1 = min(page_rect.height, rect.y1 + 3.0)
     if stretch_right and rect.width > 80:
         rect.x1 = max(rect.x1, page_rect.width - 42)
     return rect
@@ -122,6 +122,8 @@ def _font_size_for(block: BookBlock) -> float:
         return 15.0
     if source_size >= 15:
         return min(13.5, source_size * 0.70)
+    if source_size >= 13:
+        return min(12.6, source_size * 0.90)
     if source_size >= 11:
         return min(10.5, source_size * 0.82)
     if source_size <= 7.5:
@@ -287,6 +289,94 @@ def _mapped_toc_text(
     return text
 
 
+def _clean_outline_text(text: str) -> str:
+    cleaned = " ".join(
+        text.replace("\x00", " ")
+        .replace("·", " ")
+        .replace(".", " ")
+        .split()
+    )
+    return re.sub(
+        r"\s+(?:[ivxlcdmIVXLCDM]+|\d+[a-zA-Z]?)\s*$",
+        "",
+        cleaned,
+    ).strip()
+
+
+def _strip_outline_prefix(text: str) -> str:
+    return re.sub(
+        r"^[ivxlcdmIVXLCDM\d]{1,8}\s+",
+        "",
+        text,
+    ).strip()
+
+
+def _outline_translation_maps(
+    blocks: list[BookBlock],
+) -> tuple[dict[str, str], dict[str, str]]:
+    by_source: dict[str, str] = {}
+    by_roman: dict[str, str] = {}
+    roman_pattern = re.compile(r"^([ivxlcdmIVXLCDM]{1,8})\b")
+    for block in blocks:
+        if not block.translated_text:
+            continue
+        source = _clean_outline_text(block.source_text)
+        translated = _clean_outline_text(block.translated_text)
+        if not source or not translated:
+            continue
+        by_source[source.casefold()] = translated
+        stripped_source = _strip_outline_prefix(source)
+        if stripped_source and stripped_source != source:
+            by_source[stripped_source.casefold()] = translated
+        source_roman = roman_pattern.match(source)
+        translated_roman = roman_pattern.match(translated)
+        roman = source_roman or translated_roman
+        if roman and _strip_outline_prefix(translated):
+            by_roman[roman.group(1).upper()] = translated
+    return by_source, by_roman
+
+
+def _with_outline_roman(text: str, roman_match) -> str:
+    if not roman_match:
+        return text
+    roman = roman_match.group(1).upper()
+    if re.match(r"^[ivxlcdmIVXLCDM\d]{1,8}\b", text):
+        return re.sub(
+            r"^[ivxlcdmIVXLCDM\d]{1,8}\b",
+            roman,
+            text,
+            count=1,
+        )
+    return f"{roman} {text}"
+
+
+def _mapped_outline_text(
+    text: str,
+    by_source: dict[str, str],
+    by_roman: dict[str, str],
+) -> str:
+    cleaned = _clean_outline_text(text)
+    if not cleaned:
+        return text.replace("\x00", " ").strip()
+    if cleaned.casefold() == "contents":
+        return "目录"
+    roman = re.match(r"^([ivxlcdmIVXLCDM]{1,8})\b", cleaned)
+    candidates = [
+        cleaned,
+        _strip_outline_prefix(cleaned),
+    ]
+    for candidate in candidates:
+        folded = candidate.casefold()
+        if folded in by_source:
+            return _with_outline_roman(by_source[folded], roman)
+        for source, translated in by_source.items():
+            if folded == source or folded.startswith(source) or source.startswith(folded):
+                return _with_outline_roman(translated, roman)
+    if roman and roman.group(1).upper() in by_roman:
+        return _with_outline_roman(by_roman[roman.group(1).upper()], roman)
+    return text.replace("\x00", " ").strip()
+
+
 def render_pdf(
     source: Path,
     blocks: list[BookBlock],
@@ -361,11 +451,23 @@ def render_pdf(
 
     toc = original.get_toc()
     if toc:
+        outline_blocks = [
+            block
+            for block in blocks
+            if block.page in toc_pages
+        ] or blocks
+        outline_by_source, outline_by_roman = _outline_translation_maps(
+            outline_blocks
+        )
         rendered.set_toc(
             [
                 [
                     level,
-                    _mapped_toc_text(title, blocks),
+                    _mapped_outline_text(
+                        title,
+                        outline_by_source,
+                        outline_by_roman,
+                    ),
                     page_number,
                     *entry[3:],
                 ]

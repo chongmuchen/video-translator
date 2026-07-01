@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -127,6 +128,39 @@ class SegmentTranslator:
         user_prompt: str,
     ) -> dict:
         """Run the configured provider and return one validated JSON object."""
+
+        attempts = max(1, self.settings.translator_retries + 1)
+        delay = max(0.0, self.settings.translator_retry_backoff_seconds)
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._complete_json_once(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            except ConfigurationError:
+                raise
+            except PipelineError as exc:
+                if attempt >= attempts:
+                    raise
+                self.logger.warning(
+                    "翻译批次失败，将在 %.1fs 后重试（%s/%s）：%s",
+                    delay,
+                    attempt,
+                    attempts - 1,
+                    exc,
+                )
+                if delay:
+                    time.sleep(delay)
+                    delay *= 2
+        raise PipelineError("翻译重试失败。")
+
+    def _complete_json_once(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict:
+        """Run the configured provider once and return one JSON object."""
 
         if self.settings.translator_provider == "passthrough":
             raise ConfigurationError(

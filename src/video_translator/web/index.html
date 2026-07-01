@@ -90,6 +90,24 @@
     }
     .new-button:hover { background: rgba(255,255,255,.12); }
     .new-button + .new-button { margin-top: 8px; }
+    .side-toggle {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      margin: 12px 2px 0;
+      color: #c2d2ca;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .side-toggle input {
+      margin-top: 2px;
+      accent-color: var(--orange);
+    }
+    .side-toggle span {
+      display: block;
+      color: #8fa398;
+      font-size: 11px;
+    }
     .history-filter {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -361,6 +379,34 @@
       font-size: 12px;
       line-height: 1.55;
     }
+    .job-policy, .step-progress-list, .book-detail {
+      margin-top: 16px;
+      border: 1px solid #ebe8e0;
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: #fbfaf6;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .job-policy strong, .step-progress-list strong, .book-detail strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 12px;
+    }
+    .step-progress-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+    }
+    .step-progress-item {
+      border-radius: 9px;
+      padding: 8px 9px;
+      background: #fff;
+    }
+    .step-progress-item.done { color: var(--green); }
+    .step-progress-item.current { color: var(--orange); }
     .job-paths {
       display: grid;
       gap: 7px;
@@ -447,6 +493,23 @@
       font-size: 12px;
       line-height: 1.6;
     }
+    .step-note {
+      margin: 0 0 14px;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #eef3ef;
+      color: #41524a;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .step-files {
+      margin-top: 12px;
+      display: grid;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .step-files code { overflow-wrap: anywhere; color: var(--ink); }
     .command {
       margin-top: 14px;
       border-radius: 9px;
@@ -535,6 +598,14 @@
     .book-card strong { display: block; margin-bottom: 5px; }
     .book-card p { margin: 0; color: var(--muted); font-size: 11px; }
     .book-card .actions { margin-top: 12px; }
+    .book-detail {
+      margin-top: 12px;
+      background: #fffefa;
+    }
+    .book-detail .job-path-line {
+      grid-template-columns: 82px minmax(0, 1fr) auto;
+      margin-top: 5px;
+    }
     .toast {
       position: fixed;
       right: 22px;
@@ -581,6 +652,13 @@
       <p class="local-note">本地流水线控制台</p>
       <button class="new-button" id="new-job-button">＋ 新建本地任务</button>
       <button class="new-button" id="book-button">＋ 翻译 PDF / EPUB</button>
+      <label class="side-toggle" for="completion-sound">
+        <input id="completion-sound" type="checkbox" checked>
+        <span>
+          任务完成叮一声
+          <span>本地浏览器提示音，默认开启。</span>
+        </span>
+      </label>
       <div class="side-title">历史任务</div>
       <div class="history-filter" id="history-filter">
         <button class="active" type="button" data-filter="all">全部</button>
@@ -737,6 +815,24 @@
                   <p class="help">Codex Plus 推荐 48，减少独立请求次数；普通 HTTP 接口可用 12。</p>
                 </div>
                 <div class="field">
+                  <label for="template-translator-timeout">单批超时时间（秒）</label>
+                  <input id="template-translator-timeout" type="number"
+                    min="30" max="3600" step="30" value="300">
+                  <p class="help">长播客或 Codex CLI 推荐 300～600。</p>
+                </div>
+                <div class="field">
+                  <label for="template-translator-retries">翻译失败重试次数</label>
+                  <input id="template-translator-retries" type="number"
+                    min="0" max="10" value="2">
+                  <p class="help">网络、超时或无效 JSON 会自动重试；配置错误不会重试。</p>
+                </div>
+                <div class="field">
+                  <label for="template-translator-backoff">重试初始等待（秒）</label>
+                  <input id="template-translator-backoff" type="number"
+                    min="0" max="300" step="1" value="3">
+                  <p class="help">每次失败后按 3、6、12 秒指数退避。</p>
+                </div>
+                <div class="field">
                   <label for="template-codex-strategy">Codex Plus 策略</label>
                   <select id="template-codex-strategy">
                     <option value="balanced" selected>平衡 — mini / medium（推荐）</option>
@@ -887,10 +983,11 @@
             </div>
             <div class="actions">
               <button class="primary" id="book-submit" type="submit">导入并开始翻译</button>
-              <span class="legal">PDF 扫描件暂不含 OCR；EPUB 会保留图片、CSS 和目录链接。</span>
+              <span class="legal">内置 PDF 目前是固定版面覆盖式排版；复杂书籍后续建议接入 BabelDOC / PDFMathTranslate 这类专业排版引擎。EPUB 会保留图片、CSS 和目录链接。</span>
             </div>
           </form>
           <div class="book-list" id="book-list"></div>
+          <div class="book-detail" id="book-detail" hidden></div>
         </section>
 
         <section id="job-panel" hidden>
@@ -912,6 +1009,8 @@
             </div>
             <div class="bar"><div id="progress-bar"></div></div>
             <div class="job-error" id="job-error"></div>
+            <div class="job-policy" id="job-policy"></div>
+            <div class="step-progress-list" id="job-step-progress"></div>
             <div class="job-paths" id="job-paths"></div>
           </div>
 
@@ -1001,6 +1100,9 @@
           {key: "translator_codex_bin", scope: "settings", label: "Codex CLI 命令", type: "text", value: "codex", help: "一般保持 codex；也可以填写可执行文件的绝对路径。"},
           {key: "translator_codex_model", scope: "settings", label: "Codex 模型（可选）", type: "text", value: "", placeholder: "留空使用 Codex 当前默认模型", help: "只有 provider=Codex CLI 时生效；不建议为了翻译随意写一个未经账号支持的模型名。"},
           {key: "translator_codex_strategy", scope: "settings", label: "Codex Plus 策略", type: "select", value: "balanced", options: [["balanced","平衡 — GPT-5.4 mini / medium（推荐）"],["quality","质量 — GPT-5.5 / medium"],["economy","节省 — GPT-5.4 mini / low"],["account_default","账号默认模型"]], help: "Plus 日常字幕推荐平衡；正式书籍或术语密集内容使用质量。显式填写 Codex 模型时会覆盖策略模型。"},
+          {key: "translator_timeout_seconds", scope: "settings", label: "单批超时时间（秒）", type: "number", value: "300", min: "30", max: "3600", step: "30", help: "长播客用 Codex 翻译时建议 300–600；如果仍超时，把每批片段数降到 24 或 12。"},
+          {key: "translator_retries", scope: "settings", label: "翻译失败重试次数", type: "number", value: "2", min: "0", max: "10", step: "1", help: "网络、超时或无效 JSON 会自动重试；API Key 错误等配置问题不会重试。"},
+          {key: "translator_retry_backoff_seconds", scope: "settings", label: "重试初始等待（秒）", type: "number", value: "3", min: "0", max: "300", step: "1", help: "每次失败后指数退避，例如 3、6、12 秒。"},
           {key: "translation_batch_size", scope: "settings", label: "每批片段数", type: "number", value: "48", min: "1", max: "100", help: "Codex Plus 推荐 48 以减少请求次数；普通 HTTP 接口推荐 12。每批完成都会保存。"},
           {key: "glossary", scope: "options", label: "术语表 JSON", type: "textarea", value: "", placeholder: "{\"Whisper\":\"Whisper\", \"pipeline\":\"流水线\"}", help: "必须是“原词: 译词”的 JSON 对象。", wide: true, json: true}
         ]
@@ -1035,7 +1137,7 @@
       {
         id: "mux",
         name: "混音、字幕与封装",
-        description: "输出中文配音视频、软字幕和可选原声音轨",
+        description: "输出中文配音视频/音频、软字幕和可选原声音轨",
         recommendation: "推荐开启整段压低原声：控制轨覆盖完整识别时间槽，中文提前读完后英文尾音也不会恢复。Demucs 可保留更多背景音乐，但分离不可能完全无残留，而且处理很慢。",
         command: id => `make mux JOB_ID='${id}' KEEP_ORIGINAL_AUDIO=true DUCK_ORIGINAL_AUDIO=true BURN_SUBTITLES=false ENABLE_DEMUCS=false`,
         fields: [
@@ -1055,9 +1157,13 @@
       historyFilter: "all",
       timer: null,
       pollDelay: null,
+      runStates: new Map(),
     };
     const $ = selector => document.querySelector(selector);
     const templateStorageKey = "video-translator-automation-template-v1";
+    const completionSoundStorageKey =
+      "video-translator-completion-sound-v1";
+    let completionAudioContext = null;
     const automationTemplates = {
       mac_codex: {
         height: "1080",
@@ -1072,6 +1178,9 @@
         translatorProvider: "codex_cli",
         translatorBaseUrl: "http://127.0.0.1:11434/v1",
         translatorModel: "",
+        translatorTimeout: 300,
+        translatorRetries: 2,
+        translatorRetryBackoff: 3,
         translationBatchSize: 48,
         codexStrategy: "balanced",
         ttsProvider: "edge",
@@ -1098,6 +1207,9 @@
         translatorProvider: "ollama",
         translatorBaseUrl: "http://127.0.0.1:11434/v1",
         translatorModel: "qwen3:8b",
+        translatorTimeout: 300,
+        translatorRetries: 2,
+        translatorRetryBackoff: 3,
         translationBatchSize: 12,
         codexStrategy: "balanced",
         ttsProvider: "edge",
@@ -1143,6 +1255,11 @@
         translatorModel: $("#template-translator-model").value.trim(),
         translatorApiKeyRef:
           $("#template-translator-api-key").dataset.secretRef || "",
+        translatorTimeout: Number($("#template-translator-timeout").value),
+        translatorRetries: Number($("#template-translator-retries").value),
+        translatorRetryBackoff: Number(
+          $("#template-translator-backoff").value
+        ),
         translationBatchSize: Number($("#template-translation-batch-size").value),
         codexStrategy: $("#template-codex-strategy").value,
         ttsProvider: $("#template-tts-provider").value,
@@ -1201,6 +1318,10 @@
         "#template-translator-provider": template.translatorProvider,
         "#template-translator-base-url": template.translatorBaseUrl,
         "#template-translator-model": template.translatorModel,
+        "#template-translator-timeout": template.translatorTimeout ?? 300,
+        "#template-translator-retries": template.translatorRetries ?? 2,
+        "#template-translator-backoff":
+          template.translatorRetryBackoff ?? 3,
         "#template-translation-batch-size": template.translationBatchSize,
         "#template-codex-strategy": template.codexStrategy || "balanced",
         "#template-tts-provider": template.ttsProvider,
@@ -1312,6 +1433,79 @@
       toast._timer = setTimeout(() => toast.style.display = "none", 4500);
     }
 
+    function completionSoundEnabled() {
+      return localStorage.getItem(completionSoundStorageKey) !== "false";
+    }
+
+    function syncCompletionSoundControl() {
+      const input = $("#completion-sound");
+      input.checked = completionSoundEnabled();
+    }
+
+    function audioContext() {
+      if (!completionAudioContext) {
+        const Context = window.AudioContext || window.webkitAudioContext;
+        if (!Context) return null;
+        completionAudioContext = new Context();
+      }
+      return completionAudioContext;
+    }
+
+    async function unlockCompletionSound() {
+      if (!completionSoundEnabled()) return;
+      const context = audioContext();
+      if (context?.state === "suspended") {
+        try {
+          await context.resume();
+        } catch {
+          // Browser autoplay policies may still block until the next gesture.
+        }
+      }
+    }
+
+    function playCompletionSound() {
+      if (!completionSoundEnabled()) return;
+      const context = audioContext();
+      if (!context) return;
+      const start = context.currentTime;
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.18, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.55);
+      gain.connect(context.destination);
+
+      const first = context.createOscillator();
+      first.type = "sine";
+      first.frequency.setValueAtTime(880, start);
+      first.frequency.exponentialRampToValueAtTime(1320, start + 0.18);
+      first.connect(gain);
+      first.start(start);
+      first.stop(start + 0.22);
+
+      const second = context.createOscillator();
+      second.type = "sine";
+      second.frequency.setValueAtTime(1175, start + 0.18);
+      second.connect(gain);
+      second.start(start + 0.18);
+      second.stop(start + 0.55);
+    }
+
+    function maybePlayCompletion(kind, item) {
+      const key = `${kind}:${item.id}`;
+      const previous = state.runStates.get(key);
+      const completed = kind === "book"
+        ? item.status === "rendered"
+        : item.status === "completed";
+      if (previous?.running && !item.running && completed) {
+        playCompletionSound();
+        notify(kind === "book" ? "书籍任务已完成。" : "任务已完成。");
+      }
+      state.runStates.set(key, {
+        running: Boolean(item.running),
+        status: item.status,
+      });
+    }
+
     async function api(url, options = {}) {
       const response = await fetch(url, options);
       const type = response.headers.get("content-type") || "";
@@ -1324,12 +1518,104 @@
 
     function statusLabel(job) {
       if (job.running) return "执行中";
+      if ([
+        "downloading", "extracting", "transcribing", "translating",
+        "synthesizing", "aligning", "muxing"
+      ].includes(job.status)) {
+        return "已中断，可继续";
+      }
       const labels = {
         queued: "等待下载", downloaded: "已下载", extracted: "已抽取",
         transcribed: "已识别", translated: "已翻译", synthesized: "已配音",
-        aligned: "已对齐", completed: "已完成", failed: "失败"
+        aligned: "已对齐", completed: "已完成", failed: "失败，可继续"
       };
       return labels[job.status] || job.status;
+    }
+
+    function stepProgressText(job, stepId) {
+      const progress = job.step_progress?.[stepId] || {};
+      if (stepId === "transcribe" && progress.segments) {
+        return `${progress.segments} 段`;
+      }
+      if (stepId === "translate" && progress.total) {
+        return `${progress.translated || 0}/${progress.total} 已译，剩 ${progress.pending || 0}`;
+      }
+      if (stepId === "synthesize" && progress.total) {
+        return `${progress.synthesized || 0}/${progress.total} 已配音，剩 ${progress.pending || 0}`;
+      }
+      return "";
+    }
+
+    function stepOutputPaths(job, stepId) {
+      const paths = job.artifact_paths || {};
+      const mapping = {
+        download: [["源媒体", paths.source]],
+        extract: [["识别音频", paths.audio]],
+        transcribe: [["片段数据", paths.segments]],
+        translate: [["字幕文件", paths.subtitle], ["片段数据", paths.segments]],
+        synthesize: [["片段数据", paths.segments]],
+        align: [["配音音频", paths.dub_audio]],
+        mux: [["最终输出", paths.output || job.output_path]],
+      };
+      return mapping[stepId] || [];
+    }
+
+    function stepExecutionNote(job, definition, flags) {
+      if (job.running) {
+        return "当前有步骤正在执行，新的步骤会暂时禁用，避免两个后台进程同时写同一个任务目录。";
+      }
+      if (!flags.previousComplete) {
+        return "这个步骤依赖前一步产物，必须先完成前一步。";
+      }
+      if (flags.isComplete) {
+        return "这个步骤已经完成。默认勾选“强制重跑”时，会从本步骤开始重新生成，并把后续步骤标记为未完成。";
+      }
+      if (flags.isCurrent || job.status === "failed") {
+        if (definition.id === "translate") {
+          return "点“执行此步骤”会继续翻译：已写入 segments.json 的译文会保留，只处理未翻译片段。只改批量大小或超时时间适合继续；如果改目标语言、术语表、模型或提供方，请勾选强制重跑，避免前后译文混用。";
+        }
+        return "点“执行此步骤”会从当前缺失步骤继续。不会重新下载或重新跑已经完成的前置步骤，除非勾选强制重跑。";
+      }
+      return "这个步骤已经可以执行。若未勾选强制重跑，会复用已有前置产物。";
+    }
+
+    function renderJobPolicy(job) {
+      const box = $("#job-policy");
+      const next = job.next_step
+        ? stepDefinitions.find(step => step.id === job.next_step)?.name
+        : null;
+      const text = job.running
+        ? "任务正在后台执行。此时修改页面参数不会影响正在运行的进程；要等当前步骤结束后，再提交下一步。"
+        : next
+          ? `继续执行会从“${next}”开始；已经完成的前置步骤会复用本地文件。勾选某一步的“强制重跑”才会从那一步开始清空后续状态并重试。`
+          : "任务已完成。只有在某一步勾选“强制重跑”时，才会重新生成该步骤和后续产物。";
+      box.replaceChildren();
+      const strong = document.createElement("strong");
+      strong.textContent = "继续 / 重试规则";
+      const body = document.createElement("span");
+      body.textContent = text;
+      box.append(strong, body);
+    }
+
+    function renderJobStepProgress(job) {
+      const box = $("#job-step-progress");
+      box.replaceChildren();
+      const completed = new Set(job.completed_steps || []);
+      for (const definition of stepDefinitions) {
+        const item = document.createElement("div");
+        const isDone = completed.has(definition.id);
+        const isCurrent = job.next_step === definition.id;
+        item.className =
+          `step-progress-item${isDone ? " done" : ""}${isCurrent ? " current" : ""}`;
+        const title = document.createElement("strong");
+        title.textContent = definition.name;
+        const detail = document.createElement("span");
+        detail.textContent =
+          stepProgressText(job, definition.id) ||
+          (isDone ? "已完成" : isCurrent ? "下一步" : "等待");
+        item.append(title, detail);
+        box.append(item);
+      }
     }
 
     function classifyJob(job) {
@@ -1545,7 +1831,15 @@
         name.append(strong, description);
         const stepState = document.createElement("span");
         stepState.className = "step-state";
-        stepState.textContent = isComplete ? "已完成，可强制重跑" : isCurrent ? "下一步" : previousComplete ? "可执行" : "等待前一步";
+        const progressText = stepProgressText(job, definition.id);
+        const stateText = isComplete
+          ? "已完成，可强制重跑"
+          : isCurrent
+            ? "下一步"
+            : previousComplete ? "可执行" : "等待前一步";
+        stepState.textContent = progressText
+          ? `${stateText} · ${progressText}`
+          : stateText;
         summary.append(number, name, stepState);
         summary.addEventListener("click", () => card.classList.toggle("open"));
 
@@ -1554,6 +1848,13 @@
         const recommendation = document.createElement("p");
         recommendation.className = "recommendation";
         recommendation.textContent = definition.recommendation;
+        const stepNote = document.createElement("p");
+        stepNote.className = "step-note";
+        stepNote.textContent = stepExecutionNote(job, definition, {
+          isComplete,
+          isCurrent,
+          previousComplete,
+        });
         const grid = document.createElement("div");
         grid.className = "grid";
         definition.fields.forEach(
@@ -1624,6 +1925,19 @@
         command.className = "command";
         command.textContent = definition.command(job.id);
 
+        const files = document.createElement("div");
+        files.className = "step-files";
+        for (const [label, value] of stepOutputPaths(job, definition.id)) {
+          if (!value) continue;
+          const row = document.createElement("div");
+          const name = document.createElement("span");
+          name.textContent = `${label}：`;
+          const code = document.createElement("code");
+          code.textContent = value;
+          row.append(name, code);
+          files.append(row);
+        }
+
         const actions = document.createElement("div");
         actions.className = "actions";
         const run = document.createElement("button");
@@ -1641,9 +1955,11 @@
         run.addEventListener("click", () => runStep(definition, body, force.checked));
         actions.append(run, forceWrap);
 
-        body.append(recommendation);
+        body.append(recommendation, stepNote);
         if (definition.fields.length) body.append(grid);
-        body.append(command, actions);
+        body.append(command);
+        if (files.children.length) body.append(files);
+        body.append(actions);
         card.append(summary, body);
         container.append(card);
       });
@@ -1681,7 +1997,7 @@
       addJobPathLine(box, "配音音频", paths.dub_audio);
       addJobPathLine(
         box,
-        "最终视频",
+        "最终输出",
         paths.output || job.output_path,
         job.download_ready ? `/api/jobs/${job.id}/download` : null
       );
@@ -1689,6 +2005,7 @@
     }
 
     function updateJob(job) {
+      maybePlayCompletion(classifyJob(job), job);
       state.selected = job;
       state.selectedKind = classifyJob(job);
       $("#new-job-panel").hidden = true;
@@ -1708,12 +2025,15 @@
       const error = $("#job-error");
       error.textContent = job.error || "";
       error.style.display = job.error ? "block" : "none";
+      renderJobPolicy(job);
+      renderJobStepProgress(job);
       renderJobPaths(job);
       renderSteps(job);
       renderJobs();
     }
 
     function updateBook(book) {
+      maybePlayCompletion("book", book);
       state.selected = book;
       state.selectedKind = "book";
       $("#job-panel").hidden = true;
@@ -1721,6 +2041,7 @@
       $("#empty-panel").hidden = true;
       $("#book-panel").hidden = false;
       renderBooks();
+      renderBookDetail(book);
       renderJobs();
     }
 
@@ -1766,6 +2087,7 @@
       localStorage.removeItem("video-translator-history-kind");
       $("#job-panel").hidden = true;
       $("#book-panel").hidden = true;
+      $("#book-detail").hidden = true;
       $("#empty-panel").hidden = true;
       $("#new-job-panel").hidden = false;
       renderJobs();
@@ -1780,6 +2102,7 @@
       $("#new-job-panel").hidden = true;
       $("#empty-panel").hidden = true;
       $("#book-panel").hidden = false;
+      $("#book-detail").hidden = true;
       renderJobs();
       refreshBooks();
     }
@@ -1913,6 +2236,47 @@
       }
     }
 
+    function renderBookDetail(book) {
+      const box = $("#book-detail");
+      if (!book) {
+        box.hidden = true;
+        return;
+      }
+      box.hidden = false;
+      box.replaceChildren();
+      const title = document.createElement("strong");
+      title.textContent = "当前书籍任务进度与文件位置";
+      const progress = book.step_progress || {};
+      const translate = progress.translate || {};
+      const render = progress.render || {};
+      const summary = document.createElement("p");
+      summary.textContent = [
+        `下一步：${book.next_step || "无"}`,
+        translate.total
+          ? `翻译：${translate.translated || 0}/${translate.total}，剩 ${translate.pending || 0}`
+          : "翻译：等待抽取文本",
+        render.layout_warnings
+          ? `排版警告：${render.layout_warnings} 个`
+          : "排版警告：0 个",
+      ].join(" · ");
+      const policy = document.createElement("p");
+      policy.textContent = book.running
+        ? "书籍任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
+        : "点“继续完成全部”会从缺失步骤继续：已抽取文本会复用；翻译会按目标语言、模型、策略和术语表的缓存键跳过未变化块；排版会重新生成输出文件。";
+      box.append(title, summary, policy);
+      const paths = book.artifact_paths || {};
+      addJobPathLine(box, "任务目录", book.directory_path);
+      addJobPathLine(box, "任务清单", book.manifest_path);
+      addJobPathLine(box, "原书文件", paths.source);
+      addJobPathLine(box, "文本块", paths.blocks);
+      addJobPathLine(
+        box,
+        "译本输出",
+        paths.output || book.output_path,
+        book.download_ready ? `/api/books/${book.id}/download` : null
+      );
+    }
+
     async function refreshBooks() {
       try {
         state.books = await api("/api/books");
@@ -1920,7 +2284,10 @@
           const latest = state.books.find(
             book => book.id === state.selected.id
           );
-          if (latest) state.selected = latest;
+          if (latest) {
+            state.selected = latest;
+            renderBookDetail(latest);
+          }
         }
         renderBooks();
         renderJobs();
@@ -2119,7 +2486,15 @@
           translator_provider: provider,
           translator_codex_strategy:
             $("#template-codex-strategy").value,
-          translator_timeout_seconds: 180,
+          translator_timeout_seconds: Number(
+            $("#template-translator-timeout").value
+          ),
+          translator_retries: Number(
+            $("#template-translator-retries").value
+          ),
+          translator_retry_backoff_seconds: Number(
+            $("#template-translator-backoff").value
+          ),
           translation_batch_size: Number(
             $("#template-translation-batch-size").value
           ),
@@ -2180,6 +2555,19 @@
 
     $("#new-job-button").addEventListener("click", showNewJob);
     $("#book-button").addEventListener("click", showBooks);
+    $("#completion-sound").addEventListener("change", event => {
+      localStorage.setItem(
+        completionSoundStorageKey,
+        event.target.checked ? "true" : "false"
+      );
+      if (event.target.checked) {
+        unlockCompletionSound();
+        notify("任务完成提示音已开启。");
+      } else {
+        notify("任务完成提示音已关闭。");
+      }
+    });
+    document.addEventListener("pointerdown", unlockCompletionSound);
     $("#history-filter").addEventListener("click", event => {
       const button = event.target.closest("button[data-filter]");
       if (!button) return;
@@ -2298,6 +2686,7 @@
     }
 
     const savedTemplate = readSavedAutomationTemplate();
+    syncCompletionSoundControl();
     $("#create-template").querySelector('option[value="last"]').disabled =
       !savedTemplate;
     applyAutomationTemplate(savedTemplate || automationTemplates.mac_codex);

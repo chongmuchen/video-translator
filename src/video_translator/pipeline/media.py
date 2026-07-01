@@ -559,3 +559,113 @@ def mux_video(
     output.parent.mkdir(parents=True, exist_ok=True)
     run_command(args, logger=logger)
     return output
+
+
+def mux_audio(
+    source: Path,
+    dub_audio: Path,
+    output: Path,
+    *,
+    settings: Settings,
+    media: MediaBinaries,
+    keep_original_audio: bool,
+    duck_original_audio: bool,
+    background_audio: Path | None,
+    duck_control_audio: Path | None,
+    logger: logging.Logger,
+) -> Path:
+    """Create a Chinese-dubbed M4A for pure-audio sources.
+
+    The first audio track is the listening track: Chinese narration mixed with
+    either the ducked original audio or an optional separated background stem.
+    The second audio track is the untouched original audio when requested.
+    Subtitles remain as a sidecar SRT because player support for subtitle
+    streams inside M4A is inconsistent.
+    """
+
+    source_has_audio = has_audio_stream(source, media)
+    if not source_has_audio and background_audio is None:
+        raise PipelineError("纯音频封装需要原声音轨或背景音轨。")
+
+    args: list[str | Path] = [
+        media.ffmpeg,
+        "-y",
+        "-i",
+        source,
+        "-i",
+        dub_audio,
+    ]
+    next_input_index = 2
+    background_index: int | None = None
+    if background_audio:
+        background_index = next_input_index
+        next_input_index += 1
+        args.extend(["-i", background_audio])
+    duck_control_index: int | None = None
+    if duck_control_audio:
+        duck_control_index = next_input_index
+        args.extend(["-i", duck_control_audio])
+
+    mix_source = (
+        f"{background_index}:a:0"
+        if background_index is not None
+        else "0:a:0"
+    )
+    if duck_original_audio:
+        sidechain_source = (
+            f"{duck_control_index}:a:0"
+            if duck_control_index is not None
+            else "1:a:0"
+        )
+        filter_complex = (
+            f"[{mix_source}]volume=0.62[original];"
+            f"[original][{sidechain_source}]"
+            "sidechaincompress=threshold=0.010:ratio=20:"
+            "attack=5:release=250:detection=peak:link=maximum[ducked];"
+            "[ducked][1:a:0]"
+            "amix=inputs=2:duration=longest:weights='1 1':normalize=0,"
+            "loudnorm=I=-16:LRA=11:TP=-1.5[dubbed]"
+        )
+    else:
+        filter_complex = (
+            f"[{mix_source}]volume=0.28[original];"
+            "[original][1:a:0]"
+            "amix=inputs=2:duration=longest:weights='1 1':normalize=0,"
+            "loudnorm=I=-16:LRA=11:TP=-1.5[dubbed]"
+        )
+
+    args.extend(["-filter_complex", filter_complex])
+    args.extend(["-map", "[dubbed]"])
+    if keep_original_audio and source_has_audio:
+        args.extend(["-map", "0:a:0"])
+
+    args.extend(
+        [
+            "-vn",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-metadata:s:a:0",
+            "language=chi",
+            "-metadata:s:a:0",
+            "title=中文配音",
+            "-disposition:a:0",
+            "default",
+        ]
+    )
+    if keep_original_audio and source_has_audio:
+        args.extend(
+            [
+                "-metadata:s:a:1",
+                "language=und",
+                "-metadata:s:a:1",
+                "title=原声",
+                "-disposition:a:1",
+                "0",
+            ]
+        )
+    args.extend(["-movflags", "+faststart", output])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    run_command(args, logger=logger)
+    return output
