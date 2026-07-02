@@ -9,6 +9,7 @@ from pathlib import Path
 from ..errors import VideoTranslatorError
 from ..settings import get_settings
 from .pipeline import BookTranslationPipeline
+from .professional_pdf import PROFESSIONAL_PDF_OUTPUT_MODES
 from .store import BookStore
 
 
@@ -20,7 +21,7 @@ BOOK_MODE_CHOICES = [
     "paper_translated_reflow",
     "paper_translated_reference",
     "paper_bilingual_stacked",
-]
+] + sorted(PROFESSIONAL_PDF_OUTPUT_MODES)
 
 
 def _glossary(path: str | None) -> dict[str, str]:

@@ -226,3 +226,68 @@ def test_book_pipeline_keeps_blocks_for_rerender(
         block.translated_text == block.source_text
         for block in store.read_blocks(manifest)
     )
+
+
+def test_book_pipeline_professional_pdf_skips_internal_translation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "paper.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=300)
+    page.insert_text((50, 80), "Formula y = x + 1", fontsize=12)
+    document.save(source)
+    document.close()
+
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        translator_provider="passthrough",
+    )
+    store = BookStore(settings)
+    pipeline = BookTranslationPipeline(settings, store)
+
+    def fake_render(
+        source,
+        selected_output,
+        *,
+        mode,
+        settings,
+        job_dir,
+        outputs_dir,
+        title,
+        book_id,
+        target_language,
+    ):
+        selected_output.write_bytes(b"%PDF-1.4 professional mono")
+        sibling = outputs_dir / f"{title}-zh-pdf2zh_bing_dual-{book_id[:8]}.pdf"
+        sibling.write_bytes(b"%PDF-1.4 professional dual")
+        return (
+            selected_output,
+            ["professional"],
+            {
+                "pdf2zh_bing_mono": str(selected_output),
+                "pdf2zh_bing_dual": str(sibling),
+            },
+            str(job_dir / "professional.log"),
+        )
+
+    monkeypatch.setattr(
+        "video_translator.books.pipeline.render_professional_pdf",
+        fake_render,
+    )
+
+    manifest = pipeline.run(
+        source,
+        output_mode="pdf2zh_bing_mono",
+        target_language="简体中文",
+        glossary={},
+    )
+
+    assert manifest.status == BookStatus.rendered
+    assert Path(manifest.output_path).is_file()
+    assert "extract" in manifest.completed_steps
+    assert "translate" in manifest.completed_steps
+    assert "render" in manifest.completed_steps
+    assert manifest.blocks_path is None
+    assert "pdf2zh_bing_dual" in manifest.metadata["rendered_outputs"]

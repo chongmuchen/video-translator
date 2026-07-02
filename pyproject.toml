@@ -29,6 +29,7 @@ separation = ["demucs>=4,<5"]
 books = [
   "lxml>=5,<7",
   "pymupdf>=1.26,<2",
+  "uv>=0.11,<1",
 ]
 dev = [
   "pytest>=8.4,<9",

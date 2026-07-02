@@ -236,7 +236,26 @@ def test_book_import_rejects_paper_layout_for_epub(tmp_path: Path) -> None:
         )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "论文排版模式仅支持 PDF。"
+    assert response.json()["detail"] == "论文/专业 PDF 排版模式仅支持 PDF。"
+
+
+def test_book_import_accepts_professional_pdf_mode(tmp_path: Path) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/books/import",
+            files={
+                "file": (
+                    "paper.pdf",
+                    b"%PDF-1.4 placeholder",
+                    "application/pdf",
+                )
+            },
+            data={"output_mode": "pdf2zh_bing_mono"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["output_mode"] == "pdf2zh_bing_mono"
 
 
 def test_segments_preview_is_limited(tmp_path: Path) -> None:

@@ -18,7 +18,10 @@
 - [x] 为 PDF 论文增加新文章式连续重排阅读版 `paper_reflow`。
 - [x] 为双栏论文增加纯译文重排、按原页序纯译文和上下对照三种可读性优先模式。
 - [x] 书籍/论文任务记录多个已生成排版版本，方便网页下载对比。
-- [ ] 接入 BabelDOC 或 PDFMathTranslate，作为复杂论文/公式/图表的高保真 PDF 引擎。
+- [x] 接入 PDFMathTranslate，作为复杂论文/公式/图表的高保真 PDF 引擎。
+- [x] 接入 BabelDOC 后端，并加入 NumPy 2 子进程兼容层。
+- [x] 在网页支持 PDFMathTranslate/BabelDOC 的 Bing、Google、OpenAI-compatible、Ollama、DeepSeek、MiniMax 模式。
+- [x] 用真实样例 PDF 验证专业引擎能生成 mono/dual 输出并保留图形。
 - [ ] 为论文批量阅读增加排序、标签、收藏、摘要和术语库管理。
 - [ ] 为扫描版论文增加 OCR 抽取。
 - [ ] 翻译过长时自动缩写并重新生成 TTS。

@@ -13,6 +13,10 @@ from ..pipeline.translator import SegmentTranslator
 from .epub import extract_epub, render_epub
 from .models import BookBlock, BookManifest, BookOutputMode, BookStatus
 from .pdf import PAPER_OUTPUT_MODES, extract_pdf, render_pdf
+from .professional_pdf import (
+    PROFESSIONAL_PDF_OUTPUT_MODES,
+    render_professional_pdf,
+)
 from .store import BookStore
 
 
@@ -222,16 +226,59 @@ class BookTranslationPipeline:
         manifest: BookManifest,
         *,
         mode: BookOutputMode,
+        target_language: str | None = None,
     ) -> BookManifest:
+        if manifest.format != "pdf" and mode in PROFESSIONAL_PDF_OUTPUT_MODES:
+            raise PipelineError("专业 PDF 引擎仅支持 PDF。")
+        selected_target_language = target_language or manifest.target_language
+        suffix = ".pdf" if manifest.format == "pdf" else ".epub"
+        output = self.store.outputs_dir / (
+            f"{manifest.title}-zh-{mode}-{manifest.id[:8]}{suffix}"
+        )
+        if mode in PROFESSIONAL_PDF_OUTPUT_MODES:
+            try:
+                path, warnings, generated, log_path = render_professional_pdf(
+                    Path(manifest.source_path),
+                    output,
+                    mode=mode,
+                    settings=self.settings,
+                    job_dir=self.store.job_dir(manifest.id),
+                    outputs_dir=self.store.outputs_dir,
+                    title=manifest.title,
+                    book_id=manifest.id,
+                    target_language=selected_target_language,
+                )
+                manifest.target_language = selected_target_language
+                manifest.output_mode = mode
+                manifest.output_path = str(path)
+                manifest.status = BookStatus.rendered
+                manifest.metadata["layout_warnings"] = warnings
+                professional_logs = manifest.metadata.setdefault(
+                    "professional_pdf_logs",
+                    {},
+                )
+                if isinstance(professional_logs, dict):
+                    professional_logs[mode] = log_path
+                rendered_outputs = manifest.metadata.setdefault(
+                    "rendered_outputs",
+                    {},
+                )
+                if isinstance(rendered_outputs, dict):
+                    rendered_outputs.update(generated)
+                for step in ("extract", "translate", "render"):
+                    if step not in manifest.completed_steps:
+                        manifest.completed_steps.append(step)
+                manifest.error = None
+                return self.store.save(manifest)
+            except Exception as exc:
+                self.store.fail(manifest, exc)
+                raise
+
         blocks = self.store.read_blocks(manifest)
         if any(not block.translated_text for block in blocks):
             raise PipelineError("仍有书籍文本块没有译文。")
         if manifest.format != "pdf" and mode in PAPER_OUTPUT_MODES:
             raise PipelineError("论文排版模式仅支持 PDF。")
-        suffix = ".pdf" if manifest.format == "pdf" else ".epub"
-        output = self.store.outputs_dir / (
-            f"{manifest.title}-zh-{mode}-{manifest.id[:8]}{suffix}"
-        )
         try:
             if manifest.format == "pdf":
                 _, warnings = render_pdf(
@@ -253,6 +300,7 @@ class BookTranslationPipeline:
                 )
             manifest.output_mode = mode
             manifest.output_path = str(output)
+            manifest.target_language = selected_target_language
             rendered_outputs = manifest.metadata.setdefault(
                 "rendered_outputs",
                 {},
@@ -277,10 +325,20 @@ class BookTranslationPipeline:
         glossary: dict[str, str],
     ) -> BookManifest:
         manifest = self.import_book(source, output_mode=output_mode)
+        if output_mode in PROFESSIONAL_PDF_OUTPUT_MODES:
+            return self.render(
+                manifest,
+                mode=output_mode,
+                target_language=target_language,
+            )
         self.extract(manifest)
         self.translate(
             manifest,
             target_language=target_language,
             glossary=glossary,
         )
-        return self.render(manifest, mode=output_mode)
+        return self.render(
+            manifest,
+            mode=output_mode,
+            target_language=target_language,
+        )

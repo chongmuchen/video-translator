@@ -975,9 +975,20 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 网页点击“＋ 翻译 PDF / EPUB”，选择文件后可配置：
 
 - 输出模式：
+  - `pdf2zh_bing_mono` / `pdf2zh_bing_dual`：PDFMathTranslate 高保真，
+    Bing 免 Key，输出纯译文或双语 PDF。严肃论文首选先试这个；
+  - `pdf2zh_google_mono` / `pdf2zh_google_dual`：PDFMathTranslate 高保真，
+    Google 免 Key，适合和 Bing 输出对比；
+  - `babeldoc_bing_mono` / `babeldoc_bing_dual`：BabelDOC 后端，高保真
+    论文引擎，适合和 PDFMathTranslate fast 后端对比；
+  - `pdf2zh_openailiked_*` / `babeldoc_openailiked_*`：使用网页上方配置的
+    OpenAI-compatible 接口，可接 Kimi 等兼容服务；
+  - `pdf2zh_ollama_*` / `babeldoc_ollama_*`：使用本机 Ollama；
+  - `pdf2zh_deepseek_*` / `babeldoc_deepseek_*`：使用 DeepSeek API；
+  - `pdf2zh_minimax_*` / `babeldoc_minimax_*`：使用 MiniMax API；
   - `translated_only`：普通书籍，只保留中文译文；
   - `bilingual`：普通书籍/固定版 PDF，原文 + 译文对照；
-  - `paper_translated_reflow`：论文排版，纯译文连续重排，当前推荐先试这个；
+  - `paper_translated_reflow`：内置草稿，纯译文连续重排；
   - `paper_translated_reference`：论文排版，按原 PDF 页序输出纯译文并插入原页标记；
   - `paper_bilingual_stacked`：论文排版，原文在上、译文在下的上下对照重排；
   - `paper_reference`：论文排版，参考原文页序生成左英文、右中文的对照阅读 PDF；
@@ -988,10 +999,12 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 - Codex 策略：书籍默认 `quality`，重要出版内容建议保持该值；
 - 术语表：继续使用 JSON 对象，保证人名、书名、技术词汇前后一致。
 
-论文建议使用 PDF；EPUB 只支持 `translated_only` 和 `bilingual`。所有论文排版
-都会复用同一个 `blocks.json` 译文缓存，因此你可以先翻译一次，再反复试不同排版，
-不会因为换版式重新消耗 Codex/API 额度。对 `Attention Is All You Need` 这类
-双栏论文，优先试 `paper_translated_reflow`，因为左右对照版会牺牲列宽。
+论文建议使用 PDF；EPUB 只支持 `translated_only` 和 `bilingual`。对
+`Attention Is All You Need` 这类公式、图表、双栏论文，优先试
+`pdf2zh_bing_mono`，再试 `pdf2zh_bing_dual` 和 `babeldoc_bing_mono`。
+专业 PDF 模式会绕过项目内置 `blocks.json` 翻译缓存，由 PDFMathTranslate /
+BabelDOC 自行解析、翻译和重排，这样才能尽量保留公式、图、表和原 PDF 版式。
+内置 `paper_*` 模式只是草稿/纯文字兜底，不适合作为严肃论文最终输出。
 已有任务不需要重新导入：打开任务详情，在“用所选模式重新排版”旁边选择排版模式，
 点击按钮即可生成新版本；已生成过的版本会在详情页列出独立下载链接。
 
@@ -1005,23 +1018,31 @@ make book-run \
   BOOK_CODEX_STRATEGY=quality
 ```
 
-论文左右对照一键运行：
+论文高保真一键运行：
 
 ```bash
 make book-run \
   BOOK_FILE='/绝对路径/paper.pdf' \
-  BOOK_MODE=paper_translated_reflow \
+  BOOK_MODE=pdf2zh_bing_mono \
   BOOK_PROVIDER=codex_cli \
   BOOK_CODEX_STRATEGY=quality
 ```
 
-首次建议分步测试一本短书或一篇 5～12 页论文：
+首次建议在网页测试一篇 5～12 页论文：
+
+1. 选择 PDF；
+2. 输出模式先选 `PDFMathTranslate · Bing免Key · 纯译文`；
+3. 跑完后在任务详情里切换为 `PDFMathTranslate · Bing免Key · 双语`；
+4. 再切换为 `BabelDOC · Bing免Key · 纯译文`；
+5. 下载各版本，用预览并排比较公式、图、表、脚注和双栏区域。
+
+命令行分步测试普通书籍：
 
 ```bash
 # 1. 导入；记下返回的书籍任务 ID
 make book-import \
   BOOK_FILE='/绝对路径/source.pdf' \
-  BOOK_MODE=paper_translated_reflow
+  BOOK_MODE=translated_only
 
 # 2. 抽取结构和文本
 make book-extract BOOK_ID='书籍任务ID'
@@ -1035,20 +1056,12 @@ make book-translate \
 # 4. 从缓存译文排版；切换模式不会重新调用模型
 make book-render \
   BOOK_ID='书籍任务ID' \
-  BOOK_MODE=paper_translated_reflow
+  BOOK_MODE=translated_only
 
-# 5. 同一份译文缓存，再生成其他论文版式用于对比
+# 5. 同一份译文缓存，再生成普通双语版用于对比
 make book-render \
   BOOK_ID='书籍任务ID' \
-  BOOK_MODE=paper_translated_reference
-
-make book-render \
-  BOOK_ID='书籍任务ID' \
-  BOOK_MODE=paper_bilingual_stacked
-
-make book-render \
-  BOOK_ID='书籍任务ID' \
-  BOOK_MODE=paper_reference
+  BOOK_MODE=bilingual
 
 make book-status BOOK_ID='书籍任务ID'
 ```
@@ -1062,6 +1075,9 @@ make book-status BOOK_ID='书籍任务ID'
 
 - EPUB 按 OPF spine 读取章节，保留原图、CSS、资源和内部链接；目录使用链接而非
   固定页码，翻译目录标题后仍指向原章节位置；
+- 专业 PDF 模式调用 PDFMathTranslate / BabelDOC；首次运行会通过 `uv` 准备
+  Python 3.12 隔离环境、DocLayout 模型和中文字体。Fast 后端通常更快且不会额外
+  加页眉说明；BabelDOC 后端更接近新一代语义/版面 IR，但可能在页顶加入来源说明；
 - 内置 PDF 引擎保持原页尺寸和页数，在原文本区域内重新排中文，图片留在原页；
   在 macOS 上优先使用 Hiragino Sans GB / Heiti 等可读中文字体，PDF outline
   目录标题会随译文更新；
@@ -1072,6 +1088,12 @@ make book-status BOOK_ID='书籍任务ID'
 
 论文排版当前开发进展：
 
+- 已完成：`pdf2zh_*` 专业模式。它调用 PDFMathTranslate fast 后端，真实测试已能
+  保留样例论文中的图形框和公式文本，并同时产出 mono/dual 两个版本。
+- 已完成：`babeldoc_*` 专业模式。它调用 PDFMathTranslate 的 BabelDOC 后端，并
+  为当前 NumPy 2 兼容问题加入子进程补丁；真实测试已能跑通并产出 mono/dual 版本。
+- 已完成：网页新建任务和历史任务详情都支持选择专业引擎；同一任务生成过的多个
+  输出版本会保留独立下载链接。
 - 已完成：`paper_translated_reflow`。这是当前推荐的论文阅读版，去掉双语对照带来
   的列宽损失，把译文排成连续文章，适合 Attention/Transformer 这类双栏论文。
 - 已完成：`paper_translated_reference`。按原 PDF 页序组织纯译文，并插入“原 PDF
@@ -1088,9 +1110,9 @@ make book-status BOOK_ID='书籍任务ID'
   的每一种论文版本，便于下载对比。
 - 已完成：如果原 PDF 页面含图片/图表，任务 metadata 会记录排版警告，提醒最终版
   对照原 PDF 校样。
-- 未完成：真正商业级的公式、图表、表格、脚注、双栏浮动体重建。当前内置论文模式
-  优先解决“大量论文可读、可缓存、可对照”的阅读需求；极复杂论文应优先评估下面的
-  BabelDOC/PDFMathTranslate 引擎接入。
+- 未完成：扫描版论文 OCR、专业引擎的逐页质量评分、批量论文排序/标签/阅读队列。
+  公式、图表、表格、脚注和双栏浮动体应优先使用 `pdf2zh_*` / `babeldoc_*`
+  专业模式，而不是内置 `paper_*` 草稿模式。
 
 PDF / 论文翻译开源引擎调研：
 
@@ -1104,7 +1126,7 @@ PDF / 论文翻译开源引擎调研：
 - [PDFMathTranslate-next](https://github.com/PDFMathTranslate/PDFMathTranslate-next)：
   基于 BabelDOC 的下一代实现，可作为研究 BabelDOC 调用方式和自部署 UI 的参考。
 
-后续集成建议：网页新增 PDF 引擎选项：
+网页 PDF 引擎选项：
 
 ```text
 内置书籍引擎 / 内置论文排版 / PDFMathTranslate 高保真引擎 / BabelDOC 高保真引擎
@@ -1112,12 +1134,10 @@ PDF / 论文翻译开源引擎调研：
 
 商业化建议是两条线并行：
 
-1. “阅读产品线”：使用当前内置 `paper_translated_reflow` /
-   `paper_translated_reference` / `paper_bilingual_stacked`，重点优化批量论文
-   管理、术语一致性、阅读体验和可重复渲染。
-2. “高保真产品线”：接入 BabelDOC/PDFMathTranslate，重点解决复杂公式、图表、表格、
-   双栏版面、注释和原 PDF 视觉还原。它们可能有自己的翻译调用和缓存格式，需要另做
-   适配，避免浪费已有 `blocks.json`。
+1. “高保真产品线”：默认使用 PDFMathTranslate/BabelDOC，重点解决复杂公式、图表、
+   表格、双栏版面、注释和原 PDF 视觉还原。
+2. “阅读产品线”：保留当前内置 `paper_*` 草稿模式，后续优化批量论文管理、术语
+   一致性、阅读体验和可重复渲染。
 
 最小验收顺序：
 
@@ -1125,8 +1145,8 @@ PDF / 论文翻译开源引擎调研：
 2. 抽取后打开 `blocks.json`，抽查章节顺序、页码和原文；
 3. 翻译中途停止一次，再继续，确认已完成块没有重新翻译；
 4. 普通书籍用 `translated_only` / `bilingual` 各排一次；
-5. 论文先用 `paper_translated_reflow`，再用 `paper_translated_reference`、
-   `paper_bilingual_stacked`、`paper_reference` 各排一次，确认第二次排版没有再次消耗模型额度；
+5. 论文先用 `pdf2zh_bing_mono`，再用 `pdf2zh_bing_dual`、
+   `babeldoc_bing_mono` 各排一次，比较公式、图表、双栏和输出文字；
 6. EPUB 用 Apple Books/Calibre 检查目录跳转、图片和段落；PDF 用预览检查目录、
    页数、图片、中文字体、溢出警告和至少每章一页的译文准确度。
 

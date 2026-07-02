@@ -24,6 +24,7 @@ from .books.manager import BookManager
 from .books.models import BookStep, BookStepRequest
 from .books.pdf import PAPER_OUTPUT_MODES
 from .books.pipeline import BookTranslationPipeline
+from .books.professional_pdf import PROFESSIONAL_PDF_OUTPUT_MODES
 from .manager import JobManager
 from .models import (
     AutomatedJobCreateRequest,
@@ -304,18 +305,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if value and Path(value).is_file():
                     rendered_outputs[str(mode)] = str(Path(value))
         payload["rendered_outputs"] = rendered_outputs
-        payload["running"] = book_manager.is_running(manifest.id)
-        payload["next_step"] = next(
-            (
-                step.value
-                for step in BookStep
-                if step.value not in manifest.completed_steps
-            ),
-            None,
+        professional_logs = {}
+        raw_professional_logs = manifest.metadata.get(
+            "professional_pdf_logs",
+            {},
         )
+        if isinstance(raw_professional_logs, dict):
+            for mode, value in raw_professional_logs.items():
+                if value and Path(value).is_file():
+                    professional_logs[str(mode)] = str(Path(value))
+        payload["professional_pdf_logs"] = professional_logs
+        payload["running"] = book_manager.is_running(manifest.id)
         payload["download_ready"] = bool(
             manifest.output_path
             and Path(manifest.output_path).is_file()
+        )
+        payload["next_step"] = (
+            None
+            if payload["download_ready"]
+            else next(
+                (
+                    step.value
+                    for step in BookStep
+                    if step.value not in manifest.completed_steps
+                ),
+                None,
+            )
         )
         if payload["download_ready"]:
             payload["download_url"] = f"/api/books/{manifest.id}/download"
@@ -386,13 +401,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "translated_only",
             "bilingual",
             *PAPER_OUTPUT_MODES,
+            *PROFESSIONAL_PDF_OUTPUT_MODES,
         }
         if output_mode not in output_modes:
             raise HTTPException(status_code=400, detail="输出模式无效。")
-        if suffix != ".pdf" and output_mode in PAPER_OUTPUT_MODES:
+        if suffix != ".pdf" and (
+            output_mode in PAPER_OUTPUT_MODES
+            or output_mode in PROFESSIONAL_PDF_OUTPUT_MODES
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="论文排版模式仅支持 PDF。",
+                detail="论文/专业 PDF 排版模式仅支持 PDF。",
             )
         upload_dir = runtime_settings.runtime_dir / "book-uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)

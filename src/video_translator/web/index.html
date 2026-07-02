@@ -925,15 +925,43 @@
               <div class="field">
                 <label for="book-mode">输出模式</label>
                 <select id="book-mode">
-                  <option value="translated_only" selected>只保留译文</option>
-                  <option value="bilingual">原文 + 译文对照</option>
-                  <option value="paper_translated_reflow">论文排版：纯译文重排（推荐）</option>
-                  <option value="paper_translated_reference">论文排版：按原页序纯译文</option>
-                  <option value="paper_bilingual_stacked">论文排版：上下对照重排</option>
-                  <option value="paper_reference">论文排版：参考原文左右对照</option>
-                  <option value="paper_reflow">论文排版：新文章式重排左右对照</option>
+                  <optgroup label="专业论文 PDF 高保真（推荐）">
+                    <option value="pdf2zh_bing_mono">PDFMathTranslate · Bing免Key · 纯译文</option>
+                    <option value="pdf2zh_bing_dual">PDFMathTranslate · Bing免Key · 双语</option>
+                    <option value="pdf2zh_google_mono">PDFMathTranslate · Google免Key · 纯译文</option>
+                    <option value="pdf2zh_google_dual">PDFMathTranslate · Google免Key · 双语</option>
+                    <option value="babeldoc_bing_mono">BabelDOC · Bing免Key · 纯译文</option>
+                    <option value="babeldoc_bing_dual">BabelDOC · Bing免Key · 双语</option>
+                  </optgroup>
+                  <optgroup label="专业论文 PDF 高保真（使用上面的 API/本地模型配置）">
+                    <option value="pdf2zh_openailiked_mono">PDFMathTranslate · OpenAI-compatible/Kimi等 · 纯译文</option>
+                    <option value="pdf2zh_openailiked_dual">PDFMathTranslate · OpenAI-compatible/Kimi等 · 双语</option>
+                    <option value="pdf2zh_ollama_mono">PDFMathTranslate · Ollama · 纯译文</option>
+                    <option value="pdf2zh_ollama_dual">PDFMathTranslate · Ollama · 双语</option>
+                    <option value="pdf2zh_deepseek_mono">PDFMathTranslate · DeepSeek · 纯译文</option>
+                    <option value="pdf2zh_deepseek_dual">PDFMathTranslate · DeepSeek · 双语</option>
+                    <option value="pdf2zh_minimax_mono">PDFMathTranslate · MiniMax · 纯译文</option>
+                    <option value="pdf2zh_minimax_dual">PDFMathTranslate · MiniMax · 双语</option>
+                    <option value="babeldoc_openailiked_mono">BabelDOC · OpenAI-compatible/Kimi等 · 纯译文</option>
+                    <option value="babeldoc_openailiked_dual">BabelDOC · OpenAI-compatible/Kimi等 · 双语</option>
+                    <option value="babeldoc_ollama_mono">BabelDOC · Ollama · 纯译文</option>
+                    <option value="babeldoc_ollama_dual">BabelDOC · Ollama · 双语</option>
+                    <option value="babeldoc_deepseek_mono">BabelDOC · DeepSeek · 纯译文</option>
+                    <option value="babeldoc_deepseek_dual">BabelDOC · DeepSeek · 双语</option>
+                    <option value="babeldoc_minimax_mono">BabelDOC · MiniMax · 纯译文</option>
+                    <option value="babeldoc_minimax_dual">BabelDOC · MiniMax · 双语</option>
+                  </optgroup>
+                  <optgroup label="内置书籍 / 草稿阅读版">
+                    <option value="translated_only" selected>普通书籍：只保留译文</option>
+                    <option value="bilingual">普通书籍：原文 + 译文对照</option>
+                    <option value="paper_translated_reflow">内置草稿：纯译文重排</option>
+                    <option value="paper_translated_reference">内置草稿：按原页序纯译文</option>
+                    <option value="paper_bilingual_stacked">内置草稿：上下对照重排</option>
+                    <option value="paper_reference">内置草稿：参考原文左右对照</option>
+                    <option value="paper_reflow">内置草稿：新文章式重排左右对照</option>
+                  </optgroup>
                 </select>
-                <p class="help">EPUB 支持前两种；PDF 支持全部模式。双栏论文优先试“纯译文重排”；换排版只重建 PDF，不重新翻译。</p>
+                <p class="help">严肃论文优先选 PDFMathTranslate 或 BabelDOC。它们会重新解析原 PDF，尽量保留公式、图、表和双栏版式；内置草稿仅适合纯文字。</p>
               </div>
               <div class="field">
                 <label for="book-target">目标语言</label>
@@ -988,7 +1016,7 @@
             </div>
             <div class="actions">
               <button class="primary" id="book-submit" type="submit">导入并开始翻译</button>
-              <span class="legal">内置 PDF 目前是固定版面覆盖式排版；复杂书籍后续建议接入 BabelDOC / PDFMathTranslate 这类专业排版引擎。EPUB 会保留图片、CSS 和目录链接。</span>
+              <span class="legal">专业 PDF 模式会调用 PDFMathTranslate/BabelDOC，首次运行会自动准备模型和字体；EPUB 会保留图片、CSS 和目录链接。</span>
             </div>
           </form>
           <div class="book-list" id="book-list"></div>
@@ -2179,6 +2207,30 @@
       paper_bilingual_stacked: "论文排版·上下对照",
       paper_reference: "论文排版·参考原文",
       paper_reflow: "论文排版·新文章式重排",
+      pdf2zh_bing_mono: "PDFMathTranslate·Bing·纯译文",
+      pdf2zh_bing_dual: "PDFMathTranslate·Bing·双语",
+      pdf2zh_google_mono: "PDFMathTranslate·Google·纯译文",
+      pdf2zh_google_dual: "PDFMathTranslate·Google·双语",
+      pdf2zh_openailiked_mono: "PDFMathTranslate·OpenAI-compatible/Kimi等·纯译文",
+      pdf2zh_openailiked_dual: "PDFMathTranslate·OpenAI-compatible/Kimi等·双语",
+      pdf2zh_ollama_mono: "PDFMathTranslate·Ollama·纯译文",
+      pdf2zh_ollama_dual: "PDFMathTranslate·Ollama·双语",
+      pdf2zh_deepseek_mono: "PDFMathTranslate·DeepSeek·纯译文",
+      pdf2zh_deepseek_dual: "PDFMathTranslate·DeepSeek·双语",
+      pdf2zh_minimax_mono: "PDFMathTranslate·MiniMax·纯译文",
+      pdf2zh_minimax_dual: "PDFMathTranslate·MiniMax·双语",
+      babeldoc_bing_mono: "BabelDOC·Bing·纯译文",
+      babeldoc_bing_dual: "BabelDOC·Bing·双语",
+      babeldoc_google_mono: "BabelDOC·Google·纯译文",
+      babeldoc_google_dual: "BabelDOC·Google·双语",
+      babeldoc_openailiked_mono: "BabelDOC·OpenAI-compatible/Kimi等·纯译文",
+      babeldoc_openailiked_dual: "BabelDOC·OpenAI-compatible/Kimi等·双语",
+      babeldoc_ollama_mono: "BabelDOC·Ollama·纯译文",
+      babeldoc_ollama_dual: "BabelDOC·Ollama·双语",
+      babeldoc_deepseek_mono: "BabelDOC·DeepSeek·纯译文",
+      babeldoc_deepseek_dual: "BabelDOC·DeepSeek·双语",
+      babeldoc_minimax_mono: "BabelDOC·MiniMax·纯译文",
+      babeldoc_minimax_dual: "BabelDOC·MiniMax·双语",
     };
 
     function bookModeLabel(mode) {
@@ -2189,6 +2241,28 @@
       const basic = ["translated_only", "bilingual"];
       if (format !== "pdf") return basic;
       return [
+        "pdf2zh_bing_mono",
+        "pdf2zh_bing_dual",
+        "pdf2zh_google_mono",
+        "pdf2zh_google_dual",
+        "babeldoc_bing_mono",
+        "babeldoc_bing_dual",
+        "pdf2zh_openailiked_mono",
+        "pdf2zh_openailiked_dual",
+        "pdf2zh_ollama_mono",
+        "pdf2zh_ollama_dual",
+        "pdf2zh_deepseek_mono",
+        "pdf2zh_deepseek_dual",
+        "pdf2zh_minimax_mono",
+        "pdf2zh_minimax_dual",
+        "babeldoc_openailiked_mono",
+        "babeldoc_openailiked_dual",
+        "babeldoc_ollama_mono",
+        "babeldoc_ollama_dual",
+        "babeldoc_deepseek_mono",
+        "babeldoc_deepseek_dual",
+        "babeldoc_minimax_mono",
+        "babeldoc_minimax_dual",
         "paper_translated_reflow",
         "paper_translated_reference",
         "paper_bilingual_stacked",
@@ -2196,6 +2270,10 @@
         "paper_reflow",
         ...basic,
       ];
+    }
+
+    function isProfessionalBookMode(mode) {
+      return mode.startsWith("pdf2zh_") || mode.startsWith("babeldoc_");
     }
 
     function renderBooks() {
@@ -2312,7 +2390,14 @@
       rerenderButton.type = "button";
       rerenderButton.className = "primary";
       rerenderButton.textContent = "用所选模式重新排版";
-      rerenderButton.disabled = book.running || !(book.completed_steps || []).includes("translate");
+      const syncRerenderButton = () => {
+        const translated = (book.completed_steps || []).includes("translate");
+        rerenderButton.disabled = book.running || (
+          !translated && !isProfessionalBookMode(modeSelect.value)
+        );
+      };
+      syncRerenderButton();
+      modeSelect.addEventListener("change", syncRerenderButton);
       rerenderButton.addEventListener("click", () => {
         $("#book-mode").value = modeSelect.value;
         runBook(book.id, "steps/render");
@@ -2340,6 +2425,14 @@
           `已生成版本：${bookModeLabel(mode)}`,
           path,
           `/api/books/${book.id}/download?mode=${encodeURIComponent(mode)}`
+        );
+      }
+      const professionalLogs = book.professional_pdf_logs || {};
+      for (const [mode, path] of Object.entries(professionalLogs)) {
+        addJobPathLine(
+          box,
+          `专业引擎日志：${bookModeLabel(mode)}`,
+          path
         );
       }
     }

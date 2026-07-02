@@ -8,6 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from ..settings import Settings
 from .models import BookManifest, BookStep, BookStepRequest
 from .pipeline import BookTranslationPipeline
+from .professional_pdf import PROFESSIONAL_PDF_OUTPUT_MODES
 from .store import BookStore
 
 
@@ -55,9 +56,14 @@ class BookManager:
     ) -> BookManifest:
         manifest = self.store.get(book_id)
         pipeline = self._pipeline(settings)
+        professional = request.output_mode in PROFESSIONAL_PDF_OUTPUT_MODES
         if step == BookStep.translate and "extract" not in manifest.completed_steps:
             raise RuntimeError("翻译前必须先完成书籍文本抽取。")
-        if step == BookStep.render and "translate" not in manifest.completed_steps:
+        if (
+            step == BookStep.render
+            and "translate" not in manifest.completed_steps
+            and not professional
+        ):
             raise RuntimeError("排版前必须先完成书籍翻译。")
         if step == BookStep.extract:
             function = lambda: pipeline.extract(manifest)
@@ -71,6 +77,7 @@ class BookManager:
             function = lambda: pipeline.render(
                 manifest,
                 mode=request.output_mode,
+                target_language=request.target_language,
             )
         return self._submit(manifest, function)
 
@@ -86,6 +93,12 @@ class BookManager:
 
         def run() -> BookManifest:
             current = self.store.get(book_id)
+            if request.output_mode in PROFESSIONAL_PDF_OUTPUT_MODES:
+                return pipeline.render(
+                    current,
+                    mode=request.output_mode,
+                    target_language=request.target_language,
+                )
             if "extract" not in current.completed_steps:
                 pipeline.extract(current)
             current = self.store.get(book_id)
@@ -98,7 +111,11 @@ class BookManager:
                 glossary=request.glossary,
             )
             current = self.store.get(book_id)
-            return pipeline.render(current, mode=request.output_mode)
+            return pipeline.render(
+                current,
+                mode=request.output_mode,
+                target_language=request.target_language,
+            )
 
         return self._submit(manifest, run)
 

@@ -20,6 +20,7 @@ data/books/outputs/*
 !data/books/outputs/.gitkeep
 data/books/uploads/*
 !data/books/uploads/.gitkeep
+data/runtime/*
 
 # Scratch files from PDF rendering, inspection, and experiments.
 tmp/
