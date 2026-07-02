@@ -1114,6 +1114,62 @@ make book-status BOOK_ID='书籍任务ID'
   公式、图表、表格、脚注和双栏浮动体应优先使用 `pdf2zh_*` / `babeldoc_*`
   专业模式，而不是内置 `paper_*` 草稿模式。
 
+### 9B. 论文音频博客 / 讲解播客
+
+这个功能用于“先听懂论文”，不是翻译整本 PDF。第一版流程是：
+
+```text
+PDF → 抽取论文文本 → 生成中文讲解笔记 → 生成播客脚本 → TTS 合成 MP3
+```
+
+网页入口：左侧点“论文讲解播客”。推荐第一轮这样试：
+
+1. 上传一篇文本型 PDF，例如 Attention Is All You Need；
+2. 风格选择“双人深度讲解”；
+3. 脚本生成后端优先选 Ollama，本地模型可用 `qwen3:8b`、Qwen2.5/3
+   系列或其他中文能力较好的开源模型；
+4. 如果已经部署 CosyVoice，语音后端选 CosyVoice；否则先用 Edge TTS 看效果；
+5. 勾选“导入后自动生成脚本和音频”，等待历史任务显示“已完成”后下载 MP3。
+
+中间文件保存在：
+
+```text
+data/paper-podcasts/jobs/{论文名}--{ID}/
+├── paper-text.md          # PDF 抽取文本
+├── paper-blocks.json      # 按页/块保存的原文
+├── paper-notes.json       # 分块阅读笔记
+├── podcast-script.json    # 可机读脚本
+├── podcast-script.md      # 可人工编辑的讲解稿
+└── tts/                   # 分句语音片段
+
+data/paper-podcasts/outputs/
+└── {论文名}-paper-podcast-{style}-{ID}.mp3
+```
+
+继续 / 重试规则：
+
+- 已抽取文本会复用；
+- 讲解脚本的缓存键包含论文文本、目标语言、风格、时长、术语表、provider、模型和
+  Codex 策略；这些不变时继续执行不会重复生成脚本；
+- 更换音色或 TTS 后端时，可以只重跑“3. 音频”，不会重新生成脚本；
+- 如果是扫描版 PDF，目前会在抽取阶段失败，后续需要 OCR。
+
+备用命令行：
+
+```bash
+make paper-podcast-run \
+  PAPER_FILE='/绝对路径/paper.pdf' \
+  PAPER_PODCAST_PROVIDER=ollama \
+  PAPER_PODCAST_MODEL='qwen3:8b' \
+  PAPER_PODCAST_TTS_PROVIDER=edge
+```
+
+开源优先建议：
+
+- 脚本：Ollama + Qwen 系列 / 其他中文能力强的开源模型；
+- 语音：CosyVoice 自部署，或接入你自己的 HTTP TTS；
+- Edge TTS 只是省心兜底，不是开源模型。
+
 PDF / 论文翻译开源引擎调研：
 
 - [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)：

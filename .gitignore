@@ -20,6 +20,10 @@ data/books/outputs/*
 !data/books/outputs/.gitkeep
 data/books/uploads/*
 !data/books/uploads/.gitkeep
+data/paper-podcasts/jobs/*
+!data/paper-podcasts/jobs/.gitkeep
+data/paper-podcasts/outputs/*
+!data/paper-podcasts/outputs/.gitkeep
 data/runtime/*
 
 # Scratch files from PDF rendering, inspection, and experiments.

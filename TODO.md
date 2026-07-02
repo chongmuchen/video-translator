@@ -22,8 +22,13 @@
 - [x] 接入 BabelDOC 后端，并加入 NumPy 2 子进程兼容层。
 - [x] 在网页支持 PDFMathTranslate/BabelDOC 的 Bing、Google、OpenAI-compatible、Ollama、DeepSeek、MiniMax 模式。
 - [x] 用真实样例 PDF 验证专业引擎能生成 mono/dual 输出并保留图形。
+- [x] 增加论文音频博客 / 讲解播客第一版：PDF 抽取、中文讲解脚本、MP3 合成、网页历史和下载。
+- [x] 论文播客支持开源优先路径：Ollama 生成脚本、CosyVoice/HTTP TTS 可选，Edge TTS 可兜底。
 - [ ] 为论文批量阅读增加排序、标签、收藏、摘要和术语库管理。
 - [ ] 为扫描版论文增加 OCR 抽取。
+- [ ] 为论文播客增加 Podcastfy/Open NotebookLM 风格的双主持人高级脚本后端。
+- [ ] 为论文播客自动抽取关键图表并升级为论文讲解视频。
+- [ ] 为论文播客增加脚本质量评分、事实核查和不同模型脚本对比。
 - [ ] 翻译过长时自动缩写并重新生成 TTS。
 - [x] 为翻译批次增加自动重试和指数退避。
 - [ ] 为下载、翻译、TTS 增加统一重试、指数退避和超时。

@@ -1,6 +1,7 @@
 PYTHON := .venv/bin/python
 CLI := .venv/bin/video-translator
 BOOK_CLI := .venv/bin/book-translator
+PAPER_PODCAST_CLI := $(PYTHON) -m video_translator.paper_podcast.cli
 
 # Usage:
 #   make list URL='https://www.bilibili.com/video/BV.../'
@@ -77,6 +78,19 @@ BOOK_MODE ?= translated_only
 BOOK_PROVIDER ?= codex_cli
 BOOK_CODEX_STRATEGY ?= quality
 BOOK_ARGS ?=
+PAPER_FILE ?=
+PAPER_PODCAST_ID ?=
+PAPER_PODCAST_STYLE ?= deep_dive
+PAPER_PODCAST_DURATION ?= 8
+PAPER_PODCAST_PROVIDER ?= ollama
+PAPER_PODCAST_MODEL ?= $(if $(filter ollama,$(PAPER_PODCAST_PROVIDER)),qwen3:8b,)
+PAPER_PODCAST_CODEX_STRATEGY ?= balanced
+PAPER_PODCAST_TTS_PROVIDER ?= edge
+PAPER_PODCAST_VOICE_A ?= zh-CN-XiaoxiaoNeural
+PAPER_PODCAST_VOICE_B ?= zh-CN-YunxiNeural
+PAPER_PODCAST_TTS_RATE ?= +0%
+PAPER_PODCAST_SILENCE_MS ?= 220
+PAPER_PODCAST_ARGS ?=
 
 ifeq ($(strip $(PARTS)),)
 COLLECTION_SELECTION := --all
@@ -96,7 +110,7 @@ DOWNLOAD_ARGS = --download-backend "$(DOWNLOAD_BACKEND)" \
 	$(if $(strip $(DOWNLOAD_PROXY)),--proxy "$(DOWNLOAD_PROXY)",) \
 	$(if $(strip $(DOWNLOAD_IMPERSONATE)),--impersonate "$(DOWNLOAD_IMPERSONATE)",)
 
-.PHONY: help bootstrap doctor test plan run web auto clean list download download-one podcast extract transcribe translate synthesize align mux next resume status book-run book-import book-extract book-translate book-render book-status
+.PHONY: help bootstrap doctor test plan run web auto clean list download download-one podcast extract transcribe translate synthesize align mux next resume status book-run book-import book-extract book-translate book-render book-status paper-podcast-run paper-podcast-status
 
 help:
 	@echo "Video Translator"
@@ -159,6 +173,12 @@ help:
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=paper_translated_reflow"
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=paper_bilingual_stacked"
 	@echo "  专业 PDF 模式优先在网页选择；推荐 pdf2zh_bing_mono / pdf2zh_bing_dual。"
+	@echo
+	@echo "论文讲解播客："
+	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf'"
+	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_PROVIDER=codex_cli"
+	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_TTS_PROVIDER=cosyvoice"
+	@echo "  make paper-podcast-status PAPER_PODCAST_ID='任务ID'"
 	@echo
 	@echo "登录内容可追加："
 	@echo "  COOKIES_FROM_BROWSER=chrome DOWNLOAD_IMPERSONATE=chrome"
@@ -290,6 +310,30 @@ book-render:
 
 book-status:
 	$(BOOK_CLI) status $(BOOK_ID)
+
+paper-podcast-run:
+	@test -n "$(strip $(PAPER_FILE))" || \
+		(echo "错误：缺少 PAPER_FILE。" >&2; exit 2)
+	VT_TRANSLATOR_API_KEY="$(TRANSLATOR_API_KEY)" \
+	$(PAPER_PODCAST_CLI) run "$(PAPER_FILE)" \
+		--style "$(PAPER_PODCAST_STYLE)" \
+		--duration-minutes "$(PAPER_PODCAST_DURATION)" \
+		--target-language "$(TARGET_LANGUAGE)" \
+		--provider "$(PAPER_PODCAST_PROVIDER)" \
+		--base-url "$(TRANSLATOR_BASE_URL)" \
+		--model "$(PAPER_PODCAST_MODEL)" \
+		--codex-strategy "$(PAPER_PODCAST_CODEX_STRATEGY)" \
+		--tts-provider "$(PAPER_PODCAST_TTS_PROVIDER)" \
+		--voice-a "$(PAPER_PODCAST_VOICE_A)" \
+		--voice-b "$(PAPER_PODCAST_VOICE_B)" \
+		--tts-rate "$(PAPER_PODCAST_TTS_RATE)" \
+		--cosyvoice-url "$(COSYVOICE_BASE_URL)" \
+		--http-tts-url "$(TTS_HTTP_URL)" \
+		--silence-ms "$(PAPER_PODCAST_SILENCE_MS)" \
+		$(GLOSSARY_ARG) $(PAPER_PODCAST_ARGS)
+
+paper-podcast-status:
+	$(PAPER_PODCAST_CLI) status $(PAPER_PODCAST_ID)
 
 extract:
 	@test -n "$(strip $(JOB_ID))" || \

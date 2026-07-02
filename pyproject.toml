@@ -43,6 +43,7 @@ all = [
 [project.scripts]
 video-translator = "video_translator.cli:main"
 book-translator = "video_translator.books.cli:main"
+paper-podcast = "video_translator.paper_podcast.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_translator"]

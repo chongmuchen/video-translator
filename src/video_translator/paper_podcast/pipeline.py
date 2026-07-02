@@ -217,7 +217,49 @@ class PaperPodcastPipeline:
                     duration_minutes=duration_minutes,
                     glossary=glossary,
                 )
-            validated = _validate_script(script)
+            raw_script_path = self.store.write_json(
+                manifest,
+                "podcast-script-raw.json",
+                script,
+            )
+            repaired = False
+            try:
+                validated = _validate_script(script)
+            except PipelineError as original:
+                if self.settings.translator_provider == "passthrough":
+                    raise
+                self.logger.warning(
+                    "论文播客脚本格式不完整，尝试自动修复：%s",
+                    original,
+                )
+                repaired_script = self._repair_script(
+                    manifest.title,
+                    script,
+                    notes,
+                    target_language=target_language,
+                    style=style,
+                    duration_minutes=duration_minutes,
+                )
+                repaired_path = self.store.write_json(
+                    manifest,
+                    "podcast-script-repaired.json",
+                    repaired_script,
+                )
+                try:
+                    validated = _validate_script(repaired_script)
+                except PipelineError:
+                    validated = _script_from_notes(
+                        manifest.title,
+                        notes,
+                        target_language=target_language,
+                        style=style,
+                        duration_minutes=duration_minutes,
+                    )
+                    manifest.metadata["script_fallback_reason"] = (
+                        "模型没有生成可朗读台词，已根据阅读笔记生成兜底讲解稿。"
+                    )
+                manifest.metadata["script_repaired_path"] = str(repaired_path)
+                repaired = True
             notes_path = self.store.write_json(
                 manifest,
                 "paper-notes.json",
@@ -242,6 +284,8 @@ class PaperPodcastPipeline:
                     "script_line_count": len(validated["lines"]),
                     "note_chunk_count": len(notes),
                     "prompt_version": PAPER_PODCAST_PROMPT_VERSION,
+                    "raw_script_path": str(raw_script_path),
+                    "script_repaired": repaired,
                 }
             )
             manifest.status = PaperPodcastStatus.scripted
@@ -335,6 +379,50 @@ class PaperPodcastPipeline:
             f"{json.dumps(notes, ensure_ascii=False)}\n\n"
             "论文原文节选（用于校验标题、摘要、方法和实验）：\n"
             f"{source_brief}"
+        )
+        return translator.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+
+    def _repair_script(
+        self,
+        title: str,
+        raw_script: dict[str, Any],
+        notes: list[dict[str, Any]],
+        *,
+        target_language: str,
+        style: PodcastStyle,
+        duration_minutes: int,
+    ) -> dict[str, Any]:
+        translator = SegmentTranslator(self.settings, self.logger)
+        speaker_rule = (
+            "双人模式：speaker 只能在“主持人A”和“嘉宾B”之间交替。"
+            if style == "deep_dive"
+            else "单人模式：speaker 使用“旁白”。"
+        )
+        target_lines = max(8, min(90, duration_minutes * 6))
+        system_prompt = (
+            "你是严格的 JSON 格式修复器和中文播客编导。"
+            "把输入的论文讲解草稿改写成可直接 TTS 朗读的台词。"
+            "必须输出 JSON，且必须包含非空 lines 数组。"
+            "每条台词对象必须只有 speaker 和 text 两个关键字段。"
+            "不要输出 Markdown，不要解释。"
+        )
+        user_prompt = (
+            f"论文标题：{title}\n"
+            f"目标语言：{target_language}\n"
+            f"预计台词数量：约 {target_lines} 条\n"
+            f"{speaker_rule}\n\n"
+            "原始模型输出如下，它缺少或没有正确填写 lines。请保留其有用内容，"
+            "转成标准结构：\n"
+            f"{json.dumps(raw_script, ensure_ascii=False)}\n\n"
+            "阅读笔记可作为补充事实来源，不能编造笔记外的信息：\n"
+            f"{json.dumps(notes[:8], ensure_ascii=False)}\n\n"
+            "目标 JSON 格式："
+            '{"title":"中文标题","summary":"简介",'
+            '"chapters":["段落标题"],"takeaways":["收获"],'
+            '"lines":[{"speaker":"主持人A","text":"台词"}]}'
         )
         return translator.complete_json(
             system_prompt=system_prompt,
@@ -556,15 +644,14 @@ def _fallback_script(
 def _validate_script(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise PipelineError("论文播客脚本必须是 JSON 对象。")
-    raw_lines = value.get("lines")
-    if not isinstance(raw_lines, list) or not raw_lines:
+    raw_lines = _candidate_script_lines(value)
+    if not raw_lines:
+        raw_lines = _outline_to_lines(value)
+    if not raw_lines:
         raise PipelineError("论文播客脚本缺少 lines。")
     lines = []
     for item in raw_lines:
-        if not isinstance(item, dict):
-            continue
-        speaker = str(item.get("speaker") or "旁白").strip() or "旁白"
-        text = _clean_text(str(item.get("text") or ""))
+        speaker, text = _line_speaker_and_text(item)
         if text:
             lines.append({"speaker": speaker, "text": text})
     if not lines:
@@ -574,6 +661,181 @@ def _validate_script(value: dict[str, Any]) -> dict[str, Any]:
         "summary": _clean_text(str(value.get("summary") or "")),
         "chapters": _string_list(value.get("chapters")),
         "takeaways": _string_list(value.get("takeaways")),
+        "lines": lines,
+    }
+
+
+def _candidate_script_lines(value: dict[str, Any]) -> list[Any]:
+    """Accept common model variants, not only the exact `lines` key."""
+
+    keys = (
+        "lines",
+        "dialogue",
+        "dialogues",
+        "conversation",
+        "script",
+        "podcast_script",
+        "segments",
+        "utterances",
+        "transcript",
+    )
+    for key in keys:
+        candidate = value.get(key)
+        extracted = _extract_line_list(candidate)
+        if extracted:
+            return extracted
+    for candidate in value.values():
+        extracted = _extract_line_list(candidate)
+        if extracted:
+            return extracted
+    return []
+
+
+def _extract_line_list(candidate) -> list[Any]:
+    if isinstance(candidate, list):
+        if any(_line_speaker_and_text(item)[1] for item in candidate):
+            return candidate
+        for item in candidate:
+            nested = _extract_line_list(item)
+            if nested:
+                return nested
+    if isinstance(candidate, dict):
+        for key in (
+            "lines",
+            "dialogue",
+            "dialogues",
+            "conversation",
+            "script",
+            "segments",
+            "utterances",
+            "items",
+            "content",
+        ):
+            nested = _extract_line_list(candidate.get(key))
+            if nested:
+                return nested
+    return []
+
+
+def _line_speaker_and_text(item) -> tuple[str, str]:
+    if isinstance(item, str):
+        text = _clean_text(item)
+        for delimiter in ("：", ":"):
+            if delimiter in text:
+                speaker, line = text.split(delimiter, 1)
+                speaker = speaker.strip()
+                line = _clean_text(line)
+                if 0 < len(speaker) <= 20 and line:
+                    return speaker, line
+        return "旁白", text
+    if not isinstance(item, dict):
+        return "旁白", ""
+    speaker = str(
+        item.get("speaker")
+        or item.get("role")
+        or item.get("name")
+        or item.get("host")
+        or item.get("character")
+        or "旁白"
+    ).strip() or "旁白"
+    text_value = (
+        item.get("text")
+        or item.get("line")
+        or item.get("content")
+        or item.get("utterance")
+        or item.get("speech")
+        or item.get("dialogue")
+        or item.get("sentence")
+    )
+    if text_value is None and len(item) == 1:
+        text_value = next(iter(item.values()))
+    return speaker, _clean_text(str(text_value or ""))
+
+
+def _outline_to_lines(value: dict[str, Any]) -> list[dict[str, str]]:
+    summary = _clean_text(str(value.get("summary") or value.get("abstract") or ""))
+    chapters = _string_list(
+        value.get("chapters")
+        or value.get("sections")
+        or value.get("outline")
+    )
+    takeaways = _string_list(
+        value.get("takeaways")
+        or value.get("key_points")
+        or value.get("highlights")
+    )
+    lines: list[dict[str, str]] = []
+    if summary:
+        lines.append({"speaker": "主持人A", "text": summary})
+    for index, chapter in enumerate(chapters[:10]):
+        lines.append(
+            {
+                "speaker": "嘉宾B" if index % 2 else "主持人A",
+                "text": chapter,
+            }
+        )
+    for index, takeaway in enumerate(takeaways[:12]):
+        lines.append(
+            {
+                "speaker": "嘉宾B" if index % 2 else "主持人A",
+                "text": takeaway,
+            }
+        )
+    return lines
+
+
+def _script_from_notes(
+    title: str,
+    notes: list[dict[str, Any]],
+    *,
+    target_language: str,
+    style: PodcastStyle,
+    duration_minutes: int,
+) -> dict[str, Any]:
+    collected: list[str] = []
+    for note in notes:
+        collected.extend(_string_list(note.get("notes")))
+        collected.extend(
+            f"{item.get('term', '术语')}：{item.get('meaning', '')}"
+            for item in _dict_list(note.get("terms"))
+        )
+        collected.extend(_string_list(note.get("questions")))
+    collected = [item for item in collected if item][: max(10, duration_minutes * 4)]
+    if not collected:
+        collected = ["这里原文信息不足，无法生成完整讲解。"]
+    if style == "deep_dive":
+        lines = [
+            {
+                "speaker": "主持人A",
+                "text": f"欢迎来到论文讲解播客。今天我们聊这篇论文：{title}。",
+            }
+        ]
+        for index, item in enumerate(collected):
+            lines.append(
+                {
+                    "speaker": "嘉宾B" if index % 2 else "主持人A",
+                    "text": item,
+                }
+            )
+        lines.append(
+            {
+                "speaker": "主持人A",
+                "text": "以上就是这篇论文的主要脉络。后续如果需要，我们可以继续围绕方法细节和实验设计做精读。",
+            }
+        )
+    else:
+        lines = [
+            {
+                "speaker": "旁白",
+                "text": f"下面是一份关于 {title} 的论文讲解。",
+            },
+            *({"speaker": "旁白", "text": item} for item in collected),
+        ]
+    return {
+        "title": f"{title}｜论文讲解",
+        "summary": f"使用 {target_language} 根据阅读笔记生成的论文讲解稿。",
+        "chapters": ["论文背景", "方法与实验", "局限和启发"],
+        "takeaways": collected[:6],
         "lines": lines,
     }
 

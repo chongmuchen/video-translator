@@ -258,6 +258,30 @@ def test_book_import_accepts_professional_pdf_mode(tmp_path: Path) -> None:
     assert response.json()["output_mode"] == "pdf2zh_bing_mono"
 
 
+def test_paper_podcast_import_and_list_api(tmp_path: Path) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/paper-podcasts/import",
+            files={
+                "file": (
+                    "Attention.pdf",
+                    b"%PDF-1.4 placeholder",
+                    "application/pdf",
+                )
+            },
+            data={"style": "deep_dive", "duration_minutes": "8"},
+        )
+        podcasts = client.get("/api/paper-podcasts").json()
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "Attention"
+    assert response.json()["style"] == "deep_dive"
+    assert response.json()["next_step"] == "extract"
+    assert podcasts[0]["id"] == response.json()["id"]
+    assert "source_path" not in podcasts[0]
+
+
 def test_segments_preview_is_limited(tmp_path: Path) -> None:
     app = create_app(Settings(data_dir=tmp_path / "data"))
     manager = app.state.manager
