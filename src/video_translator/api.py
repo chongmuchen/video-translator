@@ -35,6 +35,12 @@ from .models import (
     StagedJobCreateRequest,
     StepRunRequest,
 )
+from .paper_podcast.manager import PaperPodcastManager
+from .paper_podcast.models import (
+    PaperPodcastRequest,
+    PaperPodcastStep,
+)
+from .paper_podcast.pipeline import PaperPodcastPipeline
 from .pipeline.downloader import validate_remote_url
 from .pipeline.stepwise import PipelineStep, STEP_ORDER
 from .settings import Settings, get_settings
@@ -45,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or get_settings()
     manager = JobManager(runtime_settings)
     book_manager = BookManager(runtime_settings)
+    paper_podcast_manager = PaperPodcastManager(runtime_settings)
     secret_store = KeychainSecretStore()
 
     @asynccontextmanager
@@ -52,6 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         manager.shutdown()
         book_manager.shutdown()
+        paper_podcast_manager.shutdown()
 
     app = FastAPI(
         title="Video Translator",
@@ -61,6 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.manager = manager
     app.state.book_manager = book_manager
+    app.state.paper_podcast_manager = paper_podcast_manager
     app.state.secret_store = secret_store
 
     def job_payload(manifest: JobManifest) -> dict:
@@ -376,12 +385,222 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
 
+    def paper_podcast_payload(manifest) -> dict:
+        payload = manifest.public_dict()
+        podcast_dir = paper_podcast_manager.store.job_dir(manifest.id)
+        payload["directory_name"] = podcast_dir.name
+        payload["directory_path"] = str(podcast_dir)
+        payload["manifest_path"] = str(
+            podcast_dir / "podcast-manifest.json"
+        )
+        artifact_paths = {}
+        for key, value in {
+            "source": manifest.source_path,
+            "text": manifest.text_path,
+            "notes": manifest.notes_path,
+            "script_json": manifest.script_json_path,
+            "script_markdown": manifest.script_markdown_path,
+            "audio": manifest.audio_path,
+        }.items():
+            if value and Path(value).is_file():
+                artifact_paths[key] = str(Path(value))
+        payload["artifact_paths"] = artifact_paths
+        payload["running"] = paper_podcast_manager.is_running(manifest.id)
+        payload["download_ready"] = bool(
+            manifest.audio_path and Path(manifest.audio_path).is_file()
+        )
+        payload["next_step"] = (
+            None
+            if payload["download_ready"]
+            else next(
+                (
+                    step.value
+                    for step in PaperPodcastStep
+                    if step.value not in manifest.completed_steps
+                ),
+                None,
+            )
+        )
+        if payload["download_ready"]:
+            payload["download_url"] = (
+                f"/api/paper-podcasts/{manifest.id}/download"
+            )
+        payload["step_progress"] = {
+            "extract": {
+                "done": "extract" in manifest.completed_steps,
+                "blocks": manifest.metadata.get("block_count", 0),
+                "pages": manifest.metadata.get("page_count"),
+            },
+            "script": {
+                "done": "script" in manifest.completed_steps,
+                "lines": manifest.metadata.get("script_line_count", 0),
+                "note_chunks": manifest.metadata.get("note_chunk_count", 0),
+            },
+            "synthesize": {
+                "done": payload["download_ready"],
+                "clips": manifest.metadata.get("audio_clip_count", 0),
+            },
+        }
+        return payload
+
     @app.get("/api/books")
     def list_books() -> list[dict]:
         return [
             book_payload(manifest)
             for manifest in book_manager.store.list()
         ]
+
+    @app.get("/api/paper-podcasts")
+    def list_paper_podcasts() -> list[dict]:
+        return [
+            paper_podcast_payload(manifest)
+            for manifest in paper_podcast_manager.store.list()
+        ]
+
+    @app.post(
+        "/api/paper-podcasts/import",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_paper_podcast(
+        file: UploadFile = File(...),
+        style: str = Form("deep_dive"),
+        duration_minutes: int = Form(8),
+    ) -> dict:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix != ".pdf":
+            raise HTTPException(
+                status_code=400,
+                detail="论文播客第一版只支持 PDF。",
+            )
+        if style not in {"deep_dive", "narration"}:
+            raise HTTPException(status_code=400, detail="播客风格无效。")
+        safe_duration = max(2, min(int(duration_minutes), 60))
+        upload_dir = runtime_settings.runtime_dir / "paper-podcast-uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        temporary = upload_dir / f"{uuid.uuid4().hex}.pdf"
+        try:
+            with temporary.open("wb") as target:
+                shutil.copyfileobj(file.file, target)
+            if temporary.stat().st_size > 500 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=413,
+                    detail="论文 PDF 不能超过 500 MB。",
+                )
+            manifest = PaperPodcastPipeline(
+                runtime_settings,
+                paper_podcast_manager.store,
+            ).import_paper(
+                temporary,
+                title=Path(file.filename or temporary.name).stem,
+                style=style,
+                duration_minutes=safe_duration,
+            )
+            return paper_podcast_payload(manifest)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @app.post(
+        "/api/paper-podcasts/{podcast_id}/steps/{step}",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def run_paper_podcast_step(
+        podcast_id: str,
+        step: PaperPodcastStep,
+        request: PaperPodcastRequest,
+    ) -> dict:
+        try:
+            selected_settings = settings_with_saved_key(
+                request.settings,
+                request.translator_api_key_ref,
+            )
+            manifest = paper_podcast_manager.submit_step(
+                podcast_id,
+                step,
+                request,
+                settings=selected_settings,
+            )
+            return paper_podcast_payload(manifest)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+        except (VideoTranslatorError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/paper-podcasts/{podcast_id}/run",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def run_paper_podcast_all(
+        podcast_id: str,
+        request: PaperPodcastRequest,
+    ) -> dict:
+        try:
+            selected_settings = settings_with_saved_key(
+                request.settings,
+                request.translator_api_key_ref,
+            )
+            manifest = paper_podcast_manager.submit_all(
+                podcast_id,
+                request,
+                settings=selected_settings,
+            )
+            return paper_podcast_payload(manifest)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+        except (VideoTranslatorError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/paper-podcasts/{podcast_id}")
+    def get_paper_podcast(podcast_id: str) -> dict:
+        try:
+            return paper_podcast_payload(
+                paper_podcast_manager.store.get(podcast_id)
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+
+    @app.get("/api/paper-podcasts/{podcast_id}/download")
+    def download_paper_podcast(
+        podcast_id: str,
+        artifact: str = "audio",
+    ) -> FileResponse:
+        try:
+            manifest = paper_podcast_manager.store.get(podcast_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+        selected = {
+            "audio": manifest.audio_path,
+            "script": manifest.script_markdown_path,
+            "script_json": manifest.script_json_path,
+            "text": manifest.text_path,
+            "notes": manifest.notes_path,
+        }.get(artifact)
+        if not selected:
+            raise HTTPException(
+                status_code=409,
+                detail="这个论文播客产物尚未生成",
+            )
+        path = Path(selected).resolve()
+        job_root = paper_podcast_manager.store.job_dir(podcast_id).resolve()
+        outputs_root = paper_podcast_manager.store.outputs_dir.resolve()
+        if (
+            job_root not in path.parents
+            and outputs_root not in path.parents
+        ) or not path.is_file():
+            raise HTTPException(status_code=404, detail="论文播客产物不存在")
+        media_type = "audio/mpeg" if path.suffix.lower() == ".mp3" else None
+        return FileResponse(path, media_type=media_type, filename=path.name)
 
     @app.post(
         "/api/books/import",

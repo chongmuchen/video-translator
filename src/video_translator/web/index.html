@@ -652,6 +652,7 @@
       <p class="local-note">本地流水线控制台</p>
       <button class="new-button" id="new-job-button">＋ 新建本地任务</button>
       <button class="new-button" id="book-button">＋ 翻译 PDF / EPUB</button>
+      <button class="new-button" id="paper-podcast-button">＋ 论文讲解播客</button>
       <label class="side-toggle" for="completion-sound">
         <input id="completion-sound" type="checkbox" checked>
         <span>
@@ -665,6 +666,7 @@
         <button type="button" data-filter="video">视频</button>
         <button type="button" data-filter="podcast">播客/音频</button>
         <button type="button" data-filter="book">书籍</button>
+        <button type="button" data-filter="paper_podcast">论文播客</button>
       </div>
       <div class="job-list" id="job-list"></div>
     </aside>
@@ -1023,6 +1025,126 @@
           <div class="book-detail" id="book-detail" hidden></div>
         </section>
 
+        <section class="panel new-job" id="paper-podcast-panel" hidden>
+          <h3>论文音频博客 / 讲解播客</h3>
+          <p>输入论文 PDF，先抽取内容，再生成中文讲解脚本，最后合成 MP3。默认优先使用本地 Ollama 生成脚本；语音可选 Edge、CosyVoice 或通用 HTTP。</p>
+          <form id="paper-podcast-form">
+            <div class="grid">
+              <div class="field wide">
+                <label for="paper-podcast-file">论文 PDF <span class="recommended">第一版仅 PDF</span></label>
+                <input id="paper-podcast-file" type="file"
+                  accept=".pdf,application/pdf" required>
+              </div>
+              <div class="field">
+                <label for="paper-podcast-style">讲解风格</label>
+                <select id="paper-podcast-style">
+                  <option value="deep_dive" selected>双人深度讲解（推荐）</option>
+                  <option value="narration">单人讲解稿</option>
+                </select>
+                <p class="help">双人模式更像 NotebookLM 播客；单人模式更像老师讲论文。</p>
+              </div>
+              <div class="field">
+                <label for="paper-podcast-duration">目标时长（分钟）</label>
+                <input id="paper-podcast-duration" type="number"
+                  min="2" max="60" value="8">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-target">目标语言</label>
+                <input id="paper-podcast-target" value="简体中文">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-provider">脚本生成后端</label>
+                <select id="paper-podcast-provider">
+                  <option value="ollama" selected>Ollama 本地开源模型</option>
+                  <option value="codex_cli">Codex Plus</option>
+                  <option value="kimi">Kimi API</option>
+                  <option value="minimax">MiniMax API</option>
+                  <option value="deepseek">DeepSeek API</option>
+                  <option value="openai_compatible">其他 OpenAI-compatible</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="paper-podcast-codex-strategy">Codex 策略</label>
+                <select id="paper-podcast-codex-strategy">
+                  <option value="balanced" selected>平衡 — GPT-5.4 mini / medium</option>
+                  <option value="quality">质量 — GPT-5.5 / medium</option>
+                  <option value="economy">节省 — GPT-5.4 mini / low</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="paper-podcast-base-url">接口地址</label>
+                <input id="paper-podcast-base-url"
+                  value="http://127.0.0.1:11434/v1">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-model">模型名</label>
+                <input id="paper-podcast-model" value="qwen3:8b"
+                  placeholder="Codex 使用策略模型时可留空">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-api-key">API Key</label>
+                <input id="paper-podcast-api-key" type="password"
+                  placeholder="Ollama / Codex 通常留空">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-tts-provider">中文语音后端</label>
+                <select id="paper-podcast-tts-provider">
+                  <option value="edge" selected>Edge TTS（最省心）</option>
+                  <option value="cosyvoice">CosyVoice（开源，自部署）</option>
+                  <option value="http">通用 HTTP TTS</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="paper-podcast-voice-a">主持人 A / 旁白音色</label>
+                <input id="paper-podcast-voice-a"
+                  value="zh-CN-XiaoxiaoNeural">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-voice-b">嘉宾 B 音色</label>
+                <input id="paper-podcast-voice-b"
+                  value="zh-CN-YunxiNeural">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-tts-rate">TTS 语速</label>
+                <input id="paper-podcast-tts-rate" value="+0%">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-cosyvoice-url">CosyVoice 地址</label>
+                <input id="paper-podcast-cosyvoice-url"
+                  value="http://127.0.0.1:50000">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-http-tts-url">通用 HTTP TTS 地址</label>
+                <input id="paper-podcast-http-tts-url"
+                  placeholder="仅 provider=http 时填写">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-silence">台词间隔（毫秒）</label>
+                <input id="paper-podcast-silence" type="number"
+                  min="0" max="2000" value="220">
+              </div>
+              <div class="field wide">
+                <label for="paper-podcast-glossary">术语表 JSON</label>
+                <textarea id="paper-podcast-glossary"
+                  placeholder='{"Transformer":"Transformer","attention":"注意力机制"}'></textarea>
+              </div>
+              <div class="check-field">
+                <input id="paper-podcast-auto" type="checkbox" checked>
+                <div>
+                  <label for="paper-podcast-auto">导入后自动生成脚本和音频</label>
+                  <p class="help">关闭后可先检查抽取文本，再生成脚本，最后合成 MP3。</p>
+                </div>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" id="paper-podcast-submit" type="submit">导入并生成播客</button>
+              <span class="legal">开源优先：脚本推荐 Ollama，本地语音推荐 CosyVoice；未部署时可先用 Edge TTS 看效果。</span>
+            </div>
+          </form>
+          <div class="book-list" id="paper-podcast-list"></div>
+          <div class="book-detail" id="paper-podcast-detail" hidden></div>
+        </section>
+
         <section id="job-panel" hidden>
           <div class="panel job-header">
             <div class="job-headline">
@@ -1185,6 +1307,7 @@
     const state = {
       jobs: [],
       books: [],
+      paperPodcasts: [],
       selected: null,
       selectedKind: null,
       historyFilter: "all",
@@ -1531,7 +1654,13 @@
         : item.status === "completed";
       if (previous?.running && !item.running && completed) {
         playCompletionSound();
-        notify(kind === "book" ? "书籍任务已完成。" : "任务已完成。");
+        notify(
+          kind === "book"
+            ? "书籍任务已完成。"
+            : kind === "paper_podcast"
+              ? "论文播客任务已完成。"
+              : "任务已完成。"
+        );
       }
       state.runStates.set(key, {
         running: Boolean(item.running),
@@ -1667,6 +1796,7 @@
         video: "视频",
         podcast: "播客",
         book: "书籍",
+        paper_podcast: "论文播客",
       }[kind] || kind;
     }
 
@@ -1690,6 +1820,14 @@
           status: bookStatus(book),
           updatedAt: book.updated_at || book.created_at,
           raw: book,
+        })),
+        ...state.paperPodcasts.map(podcast => ({
+          id: podcast.id,
+          kind: "paper_podcast",
+          title: podcast.title || "未命名论文播客",
+          status: paperPodcastStatus(podcast),
+          updatedAt: podcast.updated_at || podcast.created_at,
+          raw: podcast,
         })),
       ];
       return items
@@ -1750,7 +1888,9 @@
           "click",
           () => item.kind === "book"
             ? selectBook(item.id)
-            : selectJob(item.id)
+            : item.kind === "paper_podcast"
+              ? selectPaperPodcast(item.id)
+              : selectJob(item.id)
         );
         list.append(button);
       });
@@ -2043,6 +2183,7 @@
       state.selectedKind = classifyJob(job);
       $("#new-job-panel").hidden = true;
       $("#book-panel").hidden = true;
+      $("#paper-podcast-panel").hidden = true;
       $("#empty-panel").hidden = true;
       $("#job-panel").hidden = false;
       $("#job-title").textContent = job.title || "等待获取媒体标题";
@@ -2071,6 +2212,7 @@
       state.selectedKind = "book";
       $("#job-panel").hidden = true;
       $("#new-job-panel").hidden = true;
+      $("#paper-podcast-panel").hidden = true;
       $("#empty-panel").hidden = true;
       $("#book-panel").hidden = false;
       renderBooks();
@@ -2078,10 +2220,27 @@
       renderJobs();
     }
 
+    function updatePaperPodcast(podcast) {
+      maybePlayCompletion("paper_podcast", podcast);
+      state.selected = podcast;
+      state.selectedKind = "paper_podcast";
+      $("#job-panel").hidden = true;
+      $("#new-job-panel").hidden = true;
+      $("#book-panel").hidden = true;
+      $("#empty-panel").hidden = true;
+      $("#paper-podcast-panel").hidden = false;
+      renderPaperPodcasts();
+      renderPaperPodcastDetail(podcast);
+      renderJobs();
+    }
+
     async function refreshJobs() {
       state.jobs = await api("/api/jobs");
       renderJobs();
-      if (state.selected && state.selectedKind !== "book") {
+      if (
+        state.selected &&
+        !["book", "paper_podcast"].includes(state.selectedKind)
+      ) {
         const latest = state.jobs.find(job => job.id === state.selected.id);
         if (latest) updateJob(latest);
       }
@@ -2113,6 +2272,19 @@
       }
     }
 
+    async function selectPaperPodcast(id) {
+      try {
+        const podcast = await api(`/api/paper-podcasts/${id}`);
+        updatePaperPodcast(podcast);
+        localStorage.setItem("video-translator-job", id);
+        localStorage.setItem("video-translator-history-kind", "paper_podcast");
+        await refreshPaperPodcasts();
+        startPolling(true);
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
     function showNewJob() {
       state.selected = null;
       state.selectedKind = null;
@@ -2120,7 +2292,9 @@
       localStorage.removeItem("video-translator-history-kind");
       $("#job-panel").hidden = true;
       $("#book-panel").hidden = true;
+      $("#paper-podcast-panel").hidden = true;
       $("#book-detail").hidden = true;
+      $("#paper-podcast-detail").hidden = true;
       $("#empty-panel").hidden = true;
       $("#new-job-panel").hidden = false;
       renderJobs();
@@ -2133,11 +2307,28 @@
       localStorage.removeItem("video-translator-history-kind");
       $("#job-panel").hidden = true;
       $("#new-job-panel").hidden = true;
+      $("#paper-podcast-panel").hidden = true;
       $("#empty-panel").hidden = true;
       $("#book-panel").hidden = false;
       $("#book-detail").hidden = true;
       renderJobs();
       refreshBooks();
+    }
+
+    function showPaperPodcasts() {
+      state.selected = null;
+      state.selectedKind = null;
+      localStorage.removeItem("video-translator-job");
+      localStorage.removeItem("video-translator-history-kind");
+      $("#job-panel").hidden = true;
+      $("#new-job-panel").hidden = true;
+      $("#book-panel").hidden = true;
+      $("#book-detail").hidden = true;
+      $("#empty-panel").hidden = true;
+      $("#paper-podcast-panel").hidden = false;
+      $("#paper-podcast-detail").hidden = true;
+      renderJobs();
+      refreshPaperPodcasts();
     }
 
     function bookRequestPayload() {
@@ -2197,6 +2388,266 @@
         failed: "失败",
       };
       return labels[book.status] || book.status;
+    }
+
+    function paperPodcastStatus(podcast) {
+      if (podcast.running) return "执行中";
+      if (podcast.error) return "失败，可继续";
+      if (["extracting", "scripting", "synthesizing"].includes(podcast.status)) {
+        return "已中断，可继续";
+      }
+      const labels = {
+        imported: "已导入",
+        extracted: "已抽取",
+        scripted: "已生成脚本",
+        completed: "已完成",
+        failed: "失败",
+      };
+      return labels[podcast.status] || podcast.status;
+    }
+
+    function paperPodcastRequestPayload() {
+      const provider = $("#paper-podcast-provider").value;
+      const rawGlossary = $("#paper-podcast-glossary").value.trim();
+      let glossary = {};
+      if (rawGlossary) {
+        try {
+          glossary = JSON.parse(rawGlossary);
+        } catch {
+          throw new Error("论文播客术语表不是合法 JSON。");
+        }
+      }
+      const settings = {
+        translator_provider: provider,
+        translator_codex_strategy: $("#paper-podcast-codex-strategy").value,
+        translator_timeout_seconds: 600,
+        translator_retries: 2,
+        translation_batch_size: provider === "codex_cli" ? 24 : 8,
+        tts_provider: $("#paper-podcast-tts-provider").value,
+        tts_voice: $("#paper-podcast-voice-a").value.trim(),
+        tts_rate: $("#paper-podcast-tts-rate").value.trim() || "+0%",
+        tts_volume: "+0%",
+        cosyvoice_base_url: $("#paper-podcast-cosyvoice-url").value.trim(),
+        tts_http_url:
+          $("#paper-podcast-http-tts-url").value.trim() || null,
+      };
+      const payload = {
+        target_language:
+          $("#paper-podcast-target").value.trim() || "简体中文",
+        style: $("#paper-podcast-style").value,
+        duration_minutes: Number($("#paper-podcast-duration").value) || 8,
+        glossary,
+        voice_a: $("#paper-podcast-voice-a").value.trim(),
+        voice_b: $("#paper-podcast-voice-b").value.trim(),
+        silence_ms: Number($("#paper-podcast-silence").value) || 220,
+        settings,
+      };
+      const model = $("#paper-podcast-model").value.trim();
+      if (provider === "codex_cli") {
+        settings.translator_codex_bin = "codex";
+        settings.translator_codex_model = model || null;
+      } else {
+        settings.translator_base_url =
+          $("#paper-podcast-base-url").value.trim();
+        settings.translator_model = model;
+        const directKey = $("#paper-podcast-api-key").value.trim();
+        const saved = readSavedAutomationTemplate();
+        if (directKey) settings.translator_api_key = directKey;
+        else if (
+          saved?.translatorProvider === provider &&
+          saved?.translatorApiKeyRef
+        ) {
+          payload.translator_api_key_ref =
+            saved.translatorApiKeyRef;
+        }
+      }
+      return payload;
+    }
+
+    function renderPaperPodcasts() {
+      const list = $("#paper-podcast-list");
+      list.replaceChildren();
+      if (!state.paperPodcasts.length) {
+        const empty = document.createElement("div");
+        empty.className = "placeholder";
+        empty.textContent = "还没有论文播客任务。";
+        list.append(empty);
+        return;
+      }
+      for (const podcast of state.paperPodcasts) {
+        const card = document.createElement("article");
+        card.className =
+          `book-card${
+            state.selectedKind === "paper_podcast" &&
+            state.selected?.id === podcast.id
+              ? " active"
+              : ""
+          }`;
+        const title = document.createElement("strong");
+        title.textContent = podcast.title;
+        const meta = document.createElement("p");
+        meta.textContent =
+          `${paperPodcastStatus(podcast)} · ${
+            podcast.style === "deep_dive" ? "双人讲解" : "单人讲解"
+          } · ${podcast.duration_minutes || 8} 分钟 · ${podcast.id.slice(0, 8)}`;
+        const error = document.createElement("p");
+        error.style.color = "var(--red)";
+        error.textContent = podcast.error || "";
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const completed = new Set(podcast.completed_steps || []);
+        const definitions = [
+          ["extract", "1. 抽取", true],
+          ["script", "2. 脚本", completed.has("extract")],
+          ["synthesize", "3. 音频", completed.has("script")],
+        ];
+        for (const [step, label, ready] of definitions) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "secondary";
+          button.textContent = completed.has(step)
+            ? `${label}（重跑）`
+            : label;
+          button.disabled = podcast.running || !ready;
+          button.addEventListener(
+            "click",
+            () => runPaperPodcast(podcast.id, `steps/${step}`)
+          );
+          actions.append(button);
+        }
+        const all = document.createElement("button");
+        all.type = "button";
+        all.className = "primary";
+        all.textContent = "继续完成全部";
+        all.disabled = podcast.running;
+        all.addEventListener(
+          "click",
+          () => runPaperPodcast(podcast.id, "run")
+        );
+        actions.append(all);
+        if (podcast.download_ready) {
+          const download = document.createElement("a");
+          download.className = "secondary";
+          download.href = `/api/paper-podcasts/${podcast.id}/download`;
+          download.textContent = "下载 MP3";
+          actions.append(download);
+        }
+        card.append(title, meta);
+        if (podcast.error) card.append(error);
+        card.append(actions);
+        list.append(card);
+      }
+    }
+
+    function renderPaperPodcastDetail(podcast) {
+      const box = $("#paper-podcast-detail");
+      if (!podcast) {
+        box.hidden = true;
+        return;
+      }
+      box.hidden = false;
+      box.replaceChildren();
+      const title = document.createElement("strong");
+      title.textContent = "当前论文播客任务进度与文件位置";
+      const progress = podcast.step_progress || {};
+      const script = progress.script || {};
+      const synthesize = progress.synthesize || {};
+      const summary = document.createElement("p");
+      summary.textContent = [
+        `风格：${podcast.style === "deep_dive" ? "双人深度讲解" : "单人讲解稿"}`,
+        `目标时长：${podcast.duration_minutes || 8} 分钟`,
+        `下一步：${podcast.next_step || "无"}`,
+        script.lines ? `台词：${script.lines} 条` : "台词：未生成",
+        synthesize.clips ? `音频片段：${synthesize.clips}` : "音频片段：未生成",
+      ].join(" · ");
+      const policy = document.createElement("p");
+      policy.textContent = podcast.running
+        ? "论文播客任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
+        : "点“继续完成全部”会从缺失步骤继续；已抽取文本会复用；脚本会按目标语言、模型、风格、时长和术语表缓存；音频可单独重跑以更换音色。";
+      box.append(title, summary, policy);
+      const paths = podcast.artifact_paths || {};
+      addJobPathLine(box, "任务目录", podcast.directory_path);
+      addJobPathLine(box, "任务清单", podcast.manifest_path);
+      addJobPathLine(box, "原论文", paths.source);
+      addJobPathLine(
+        box,
+        "抽取文本",
+        paths.text,
+        paths.text
+          ? `/api/paper-podcasts/${podcast.id}/download?artifact=text`
+          : null
+      );
+      addJobPathLine(
+        box,
+        "阅读笔记",
+        paths.notes,
+        paths.notes
+          ? `/api/paper-podcasts/${podcast.id}/download?artifact=notes`
+          : null
+      );
+      addJobPathLine(
+        box,
+        "讲解脚本 Markdown",
+        paths.script_markdown,
+        paths.script_markdown
+          ? `/api/paper-podcasts/${podcast.id}/download?artifact=script`
+          : null
+      );
+      addJobPathLine(
+        box,
+        "讲解脚本 JSON",
+        paths.script_json,
+        paths.script_json
+          ? `/api/paper-podcasts/${podcast.id}/download?artifact=script_json`
+          : null
+      );
+      addJobPathLine(
+        box,
+        "最终 MP3",
+        paths.audio || podcast.audio_path,
+        podcast.download_ready
+          ? `/api/paper-podcasts/${podcast.id}/download`
+          : null
+      );
+    }
+
+    async function refreshPaperPodcasts() {
+      try {
+        state.paperPodcasts = await api("/api/paper-podcasts");
+        if (state.selectedKind === "paper_podcast" && state.selected) {
+          const latest = state.paperPodcasts.find(
+            podcast => podcast.id === state.selected.id
+          );
+          if (latest) {
+            state.selected = latest;
+            renderPaperPodcastDetail(latest);
+          }
+        }
+        renderPaperPodcasts();
+        renderJobs();
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
+    async function runPaperPodcast(podcastId, action) {
+      try {
+        await api(`/api/paper-podcasts/${podcastId}/${action}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(paperPodcastRequestPayload()),
+        });
+        notify("论文播客步骤已提交。");
+        await refreshPaperPodcasts();
+        if (
+          state.selectedKind === "paper_podcast" &&
+          state.selected?.id === podcastId
+        ) {
+          startPolling(true);
+        }
+      } catch (error) {
+        notify(error.message, true);
+      }
     }
 
     const bookModeLabels = {
@@ -2571,6 +3022,16 @@
           if (desiredDelay !== state.pollDelay) startPolling();
           return;
         }
+        if (state.selectedKind === "paper_podcast") {
+          const podcast = await api(
+            `/api/paper-podcasts/${state.selected.id}`
+          );
+          updatePaperPodcast(podcast);
+          await refreshPaperPodcasts();
+          const desiredDelay = podcast.running ? 4000 : 15000;
+          if (desiredDelay !== state.pollDelay) startPolling();
+          return;
+        }
         const job = await api(`/api/jobs/${state.selected.id}`);
         updateJob(job);
         await loadLog();
@@ -2715,6 +3176,7 @@
 
     $("#new-job-button").addEventListener("click", showNewJob);
     $("#book-button").addEventListener("click", showBooks);
+    $("#paper-podcast-button").addEventListener("click", showPaperPodcasts);
     $("#completion-sound").addEventListener("change", event => {
       localStorage.setItem(
         completionSoundStorageKey,
@@ -2780,6 +3242,28 @@
         input.closest(".field").style.opacity = usesCodex ? "1" : ".48";
       }
     });
+    $("#paper-podcast-provider").addEventListener("change", event => {
+      const provider = event.target.value;
+      const preset = createTranslatorPresets[provider];
+      if (preset) {
+        [
+          $("#paper-podcast-base-url").value,
+          $("#paper-podcast-model").value,
+        ] = preset;
+      }
+      if (provider === "codex_cli") $("#paper-podcast-model").value = "";
+      const usesCodex = provider === "codex_cli";
+      for (const input of [
+        $("#paper-podcast-base-url"),
+        $("#paper-podcast-api-key"),
+      ]) {
+        input.disabled = usesCodex;
+        input.closest(".field").style.opacity = usesCodex ? ".48" : "1";
+      }
+      $("#paper-podcast-codex-strategy").disabled = !usesCodex;
+      $("#paper-podcast-codex-strategy").closest(".field").style.opacity =
+        usesCodex ? "1" : ".48";
+    });
     $("#book-form").addEventListener("submit", async event => {
       event.preventDefault();
       const submit = $("#book-submit");
@@ -2812,18 +3296,54 @@
       }
     });
 
+    $("#paper-podcast-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const submit = $("#paper-podcast-submit");
+      submit.disabled = true;
+      try {
+        const data = new FormData();
+        data.append("file", $("#paper-podcast-file").files[0]);
+        data.append("style", $("#paper-podcast-style").value);
+        data.append("duration_minutes", $("#paper-podcast-duration").value);
+        const podcast = await api("/api/paper-podcasts/import", {
+          method: "POST",
+          body: data,
+        });
+        if ($("#paper-podcast-auto").checked) {
+          await api(`/api/paper-podcasts/${podcast.id}/run`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(paperPodcastRequestPayload()),
+          });
+          notify("论文已导入，将自动生成讲解脚本和 MP3。");
+        } else {
+          notify("论文已导入，可以逐步执行。");
+        }
+        $("#paper-podcast-file").value = "";
+        await refreshPaperPodcasts();
+        await selectPaperPodcast(podcast.id);
+      } catch (error) {
+        notify(error.message, true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
     async function boot() {
       try {
-        const [health, jobs, books] = await Promise.all([
+        const [health, jobs, books, paperPodcasts] = await Promise.all([
           api("/api/health"),
           api("/api/jobs"),
           api("/api/books"),
+          api("/api/paper-podcasts"),
         ]);
         $("#local-chip").title = health.data_directory;
         state.jobs = jobs;
         state.books = books;
+        state.paperPodcasts = paperPodcasts;
         renderJobs();
         renderBooks();
+        renderPaperPodcasts();
         const remembered = localStorage.getItem("video-translator-job");
         const rememberedKind = localStorage.getItem(
           "video-translator-history-kind"
@@ -2834,6 +3354,12 @@
           books.some(book => book.id === remembered)
         ) {
           await selectBook(remembered);
+        } else if (
+          remembered &&
+          rememberedKind === "paper_podcast" &&
+          paperPodcasts.some(podcast => podcast.id === remembered)
+        ) {
+          await selectPaperPodcast(remembered);
         } else if (remembered && jobs.some(job => job.id === remembered)) {
           await selectJob(remembered);
         } else if (historyItems().length) {
@@ -2852,8 +3378,10 @@
     applyAutomationTemplate(savedTemplate || automationTemplates.mac_codex);
     $("#create-template").value = savedTemplate ? "last" : "mac_codex";
     syncCreateMode();
+    $("#paper-podcast-provider").dispatchEvent(new Event("change"));
     setInterval(() => {
       if (!$("#book-panel").hidden) refreshBooks();
+      if (!$("#paper-podcast-panel").hidden) refreshPaperPodcasts();
     }, 4000);
     boot();
   </script>
