@@ -974,12 +974,26 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 
 网页点击“＋ 翻译 PDF / EPUB”，选择文件后可配置：
 
-- 输出模式：`translated_only` 去除正文原文，或 `bilingual` 原文一段、译文一段；
+- 输出模式：
+  - `translated_only`：普通书籍，只保留中文译文；
+  - `bilingual`：普通书籍/固定版 PDF，原文 + 译文对照；
+  - `paper_translated_reflow`：论文排版，纯译文连续重排，当前推荐先试这个；
+  - `paper_translated_reference`：论文排版，按原 PDF 页序输出纯译文并插入原页标记；
+  - `paper_bilingual_stacked`：论文排版，原文在上、译文在下的上下对照重排；
+  - `paper_reference`：论文排版，参考原文页序生成左英文、右中文的对照阅读 PDF；
+  - `paper_reflow`：论文排版，把论文当作一篇新文章连续重排，仍保持左英文、右中文对照。
 - 翻译后端：与视频相同，支持 Codex CLI、Ollama、Kimi、MiniMax、DeepSeek
   和通用 OpenAI-compatible 接口；
 - 执行方式：一键执行抽取、翻译、排版，或一步一步执行并检查中间结果；
 - Codex 策略：书籍默认 `quality`，重要出版内容建议保持该值；
 - 术语表：继续使用 JSON 对象，保证人名、书名、技术词汇前后一致。
+
+论文建议使用 PDF；EPUB 只支持 `translated_only` 和 `bilingual`。所有论文排版
+都会复用同一个 `blocks.json` 译文缓存，因此你可以先翻译一次，再反复试不同排版，
+不会因为换版式重新消耗 Codex/API 额度。对 `Attention Is All You Need` 这类
+双栏论文，优先试 `paper_translated_reflow`，因为左右对照版会牺牲列宽。
+已有任务不需要重新导入：打开任务详情，在“用所选模式重新排版”旁边选择排版模式，
+点击按钮即可生成新版本；已生成过的版本会在详情页列出独立下载链接。
 
 命令行一键运行：
 
@@ -991,13 +1005,23 @@ make book-run \
   BOOK_CODEX_STRATEGY=quality
 ```
 
-首次建议分步测试一本短书：
+论文左右对照一键运行：
+
+```bash
+make book-run \
+  BOOK_FILE='/绝对路径/paper.pdf' \
+  BOOK_MODE=paper_translated_reflow \
+  BOOK_PROVIDER=codex_cli \
+  BOOK_CODEX_STRATEGY=quality
+```
+
+首次建议分步测试一本短书或一篇 5～12 页论文：
 
 ```bash
 # 1. 导入；记下返回的书籍任务 ID
 make book-import \
   BOOK_FILE='/绝对路径/source.pdf' \
-  BOOK_MODE=translated_only
+  BOOK_MODE=paper_translated_reflow
 
 # 2. 抽取结构和文本
 make book-extract BOOK_ID='书籍任务ID'
@@ -1011,7 +1035,20 @@ make book-translate \
 # 4. 从缓存译文排版；切换模式不会重新调用模型
 make book-render \
   BOOK_ID='书籍任务ID' \
-  BOOK_MODE=bilingual
+  BOOK_MODE=paper_translated_reflow
+
+# 5. 同一份译文缓存，再生成其他论文版式用于对比
+make book-render \
+  BOOK_ID='书籍任务ID' \
+  BOOK_MODE=paper_translated_reference
+
+make book-render \
+  BOOK_ID='书籍任务ID' \
+  BOOK_MODE=paper_bilingual_stacked
+
+make book-render \
+  BOOK_ID='书籍任务ID' \
+  BOOK_MODE=paper_reference
 
 make book-status BOOK_ID='书籍任务ID'
 ```
@@ -1033,31 +1070,64 @@ make book-status BOOK_ID='书籍任务ID'
 - 扫描版 PDF 当前没有 OCR；复杂彩色背景、环绕图文和多栏学术排版仍需人工校样。
   严谨出版的最终版本应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
 
-PDF 开源排版引擎调研：
+论文排版当前开发进展：
+
+- 已完成：`paper_translated_reflow`。这是当前推荐的论文阅读版，去掉双语对照带来
+  的列宽损失，把译文排成连续文章，适合 Attention/Transformer 这类双栏论文。
+- 已完成：`paper_translated_reference`。按原 PDF 页序组织纯译文，并插入“原 PDF
+  第 N 页”标记，适合需要和原文页码对照的精读场景。
+- 已完成：`paper_bilingual_stacked`。原文小字号在上、译文正常字号在下，比左右
+  对照更占空间，但比窄列左右对照更可读。
+- 已完成：`paper_reference`。它按原 PDF 页序插入“原 PDF 第 N 页”标记，输出
+  左侧英文原文、右侧中文译文的 A4 阅读 PDF。适合短段落对照；双栏长论文不再推荐
+  首选这个模式。
+- 已完成：`paper_reflow`。它去掉目录碎片、页眉页脚等页内家具，把论文正文连续
+  排成“像新文章”的左右对照版。适合短论文对照；长论文优先用纯译文重排。
+- 已完成：所有论文模式都走现有抽取、翻译、缓存、历史任务和下载链路；
+  `book-render` 切换论文模式只重新生成 PDF，不重新翻译。任务详情会记录已经生成过
+  的每一种论文版本，便于下载对比。
+- 已完成：如果原 PDF 页面含图片/图表，任务 metadata 会记录排版警告，提醒最终版
+  对照原 PDF 校样。
+- 未完成：真正商业级的公式、图表、表格、脚注、双栏浮动体重建。当前内置论文模式
+  优先解决“大量论文可读、可缓存、可对照”的阅读需求；极复杂论文应优先评估下面的
+  BabelDOC/PDFMathTranslate 引擎接入。
+
+PDF / 论文翻译开源引擎调研：
 
 - [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)：
   Python 项目，定位是保留公式、图表、目录和注释的 PDF 翻译，提供命令行、UI
   和 Docker。README 中的本地命令行示例是 `uv tool install --python 3.12 pdf2zh`
   后执行 `pdf2zh document.pdf`。它适合优先作为“高质量 PDF 引擎”接入。
-- [BabelDOC](https://github.com/funstory-ai/BabelDOC)：同样是保留版式的文档翻译
-  方向，可作为候选评估。当前项目尚未封装它的命令参数，避免在未验收前误导使用。
+- [BabelDOC](https://github.com/funstory-ai/BabelDOC)：定位为科学论文 PDF 翻译和
+  双语对照库，核心思路是把 PDF 的视觉版面信息和语义文本解耦，再做术语、上下文、
+  公式占位和自适应排版。它非常适合后续作为“保留原版式/双语论文引擎”接入。
+- [PDFMathTranslate-next](https://github.com/PDFMathTranslate/PDFMathTranslate-next)：
+  基于 BabelDOC 的下一代实现，可作为研究 BabelDOC 调用方式和自部署 UI 的参考。
 
 后续集成建议：网页新增 PDF 引擎选项：
 
 ```text
-内置快速引擎（当前） / PDFMathTranslate 高质量引擎 / BabelDOC 实验引擎
+内置书籍引擎 / 内置论文排版 / PDFMathTranslate 高保真引擎 / BabelDOC 高保真引擎
 ```
 
-高质量引擎可以直接从原 PDF 生成译本，适合复杂图文书；但它会有自己的翻译调用方式，
-不一定能直接复用本项目已经翻译好的 `blocks.json`，需要单独做适配和缓存策略。
+商业化建议是两条线并行：
+
+1. “阅读产品线”：使用当前内置 `paper_translated_reflow` /
+   `paper_translated_reference` / `paper_bilingual_stacked`，重点优化批量论文
+   管理、术语一致性、阅读体验和可重复渲染。
+2. “高保真产品线”：接入 BabelDOC/PDFMathTranslate，重点解决复杂公式、图表、表格、
+   双栏版面、注释和原 PDF 视觉还原。它们可能有自己的翻译调用和缓存格式，需要另做
+   适配，避免浪费已有 `blocks.json`。
 
 最小验收顺序：
 
 1. 导入后确认格式、标题和任务目录；
 2. 抽取后打开 `blocks.json`，抽查章节顺序、页码和原文；
 3. 翻译中途停止一次，再继续，确认已完成块没有重新翻译；
-4. 用两种输出模式各排一次，确认第二次排版没有再次消耗模型额度；
-5. EPUB 用 Apple Books/Calibre 检查目录跳转、图片和段落；PDF 用预览检查目录、
+4. 普通书籍用 `translated_only` / `bilingual` 各排一次；
+5. 论文先用 `paper_translated_reflow`，再用 `paper_translated_reference`、
+   `paper_bilingual_stacked`、`paper_reference` 各排一次，确认第二次排版没有再次消耗模型额度；
+6. EPUB 用 Apple Books/Calibre 检查目录跳转、图片和段落；PDF 用预览检查目录、
    页数、图片、中文字体、溢出警告和至少每章一页的译文准确度。
 
 ## 10. 第八步：验证 YouTube/B站输入

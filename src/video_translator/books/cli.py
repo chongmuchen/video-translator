@@ -12,6 +12,17 @@ from .pipeline import BookTranslationPipeline
 from .store import BookStore
 
 
+BOOK_MODE_CHOICES = [
+    "translated_only",
+    "bilingual",
+    "paper_reference",
+    "paper_reflow",
+    "paper_translated_reflow",
+    "paper_translated_reference",
+    "paper_bilingual_stacked",
+]
+
+
 def _glossary(path: str | None) -> dict[str, str]:
     if not path:
         return {}
@@ -66,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("source")
     run.add_argument(
         "--mode",
-        choices=["translated_only", "bilingual"],
+        choices=BOOK_MODE_CHOICES,
         default="translated_only",
     )
     run.add_argument("--target-language", default="简体中文")
@@ -76,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     imported.add_argument("source")
     imported.add_argument(
         "--mode",
-        choices=["translated_only", "bilingual"],
+        choices=BOOK_MODE_CHOICES,
         default="translated_only",
     )
 
@@ -92,7 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("book_id")
     render.add_argument(
         "--mode",
-        choices=["translated_only", "bilingual"],
+        choices=BOOK_MODE_CHOICES,
         default="translated_only",
     )
 

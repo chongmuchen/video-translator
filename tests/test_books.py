@@ -132,6 +132,73 @@ def test_pdf_preserves_page_count_and_updates_outline(
     translated.close()
 
 
+def test_pdf_paper_layout_modes_generate_bilingual_reading_pdf(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "paper.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=420, height=560)
+    page.insert_text((50, 80), "A Practical Paper Title", fontsize=19)
+    page.insert_text((50, 130), "Abstract", fontsize=14)
+    page.insert_text(
+        (50, 165),
+        "This paper studies a small but useful translation workflow.",
+        fontsize=10,
+    )
+    page.insert_text((50, 220), "1 Introduction", fontsize=13)
+    page.insert_text(
+        (50, 255),
+        "The system keeps intermediate blocks so layout can be retried.",
+        fontsize=10,
+    )
+    document.save(source)
+    document.close()
+
+    blocks, _ = extract_pdf(source)
+    for block in blocks:
+        block.translated_text = {
+            "A Practical Paper Title": "一篇实用论文标题",
+            "Abstract": "摘要",
+            "This paper studies a small but useful translation workflow.": (
+                "本文研究一个小而实用的翻译工作流。"
+            ),
+            "1 Introduction": "1 引言",
+            "The system keeps intermediate blocks so layout can be retried.": (
+                "系统保留中间文本块，因此可以重复尝试排版。"
+            ),
+        }[block.source_text]
+
+    for mode in (
+        "paper_reference",
+        "paper_reflow",
+        "paper_translated_reflow",
+        "paper_translated_reference",
+        "paper_bilingual_stacked",
+    ):
+        output = tmp_path / f"{mode}.pdf"
+        _, warnings = render_pdf(source, blocks, output, mode=mode)
+        rendered = pymupdf.open(output)
+        text = "\n".join(page.get_text() for page in rendered).replace(
+            "\xa0",
+            " ",
+        )
+
+        assert rendered.page_count >= 1
+        assert "A Practical Paper Title" in text
+        if mode in {"paper_reference", "paper_reflow"}:
+            assert "Original" in text
+        else:
+            assert "一篇实用论文标题" in text
+        assert warnings
+        if mode in {
+            "paper_reflow",
+            "paper_translated_reflow",
+            "paper_bilingual_stacked",
+        }:
+            assert any("改变原 PDF 页码" in warning for warning in warnings)
+        rendered.close()
+
+
 def test_book_pipeline_keeps_blocks_for_rerender(
     tmp_path: Path,
 ) -> None:

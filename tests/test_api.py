@@ -220,6 +220,25 @@ def test_book_import_and_list_api(tmp_path: Path) -> None:
     assert "source_path" not in books[0]
 
 
+def test_book_import_rejects_paper_layout_for_epub(tmp_path: Path) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/books/import",
+            files={
+                "file": (
+                    "Example Book.epub",
+                    b"epub-placeholder",
+                    "application/epub+zip",
+                )
+            },
+            data={"output_mode": "paper_reference"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "论文排版模式仅支持 PDF。"
+
+
 def test_segments_preview_is_limited(tmp_path: Path) -> None:
     app = create_app(Settings(data_dir=tmp_path / "data"))
     manager = app.state.manager

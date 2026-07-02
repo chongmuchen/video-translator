@@ -11,7 +11,15 @@ from pydantic import BaseModel, Field
 from ..models import RuntimeSettingsUpdate, utc_now
 
 
-BookOutputMode = Literal["translated_only", "bilingual"]
+BookOutputMode = Literal[
+    "translated_only",
+    "bilingual",
+    "paper_reference",
+    "paper_reflow",
+    "paper_translated_reflow",
+    "paper_translated_reference",
+    "paper_bilingual_stacked",
+]
 
 
 class BookStatus(str, Enum):

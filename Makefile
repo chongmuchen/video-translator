@@ -149,10 +149,14 @@ help:
 	@echo
 	@echo "PDF / EPUB 书籍翻译："
 	@echo "  make book-run BOOK_FILE='/path/book.pdf' BOOK_MODE=translated_only"
+	@echo "  make book-run BOOK_FILE='/path/paper.pdf' BOOK_MODE=paper_translated_reflow"
 	@echo "  make book-import BOOK_FILE='/path/book.epub'"
 	@echo "  make book-extract BOOK_ID='任务ID'"
 	@echo "  make book-translate BOOK_ID='任务ID' BOOK_PROVIDER=codex_cli BOOK_CODEX_STRATEGY=quality"
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=bilingual"
+	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=paper_translated_reflow"
+	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=paper_bilingual_stacked"
+	@echo "  BOOK_MODE 可选：translated_only / bilingual / paper_translated_reflow / paper_translated_reference / paper_bilingual_stacked / paper_reference / paper_reflow"
 	@echo
 	@echo "登录内容可追加："
 	@echo "  COOKIES_FROM_BROWSER=chrome DOWNLOAD_IMPERSONATE=chrome"

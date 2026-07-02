@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from .errors import InvalidSourceError, VideoTranslatorError
 from .books.manager import BookManager
 from .books.models import BookStep, BookStepRequest
+from .books.pdf import PAPER_OUTPUT_MODES
 from .books.pipeline import BookTranslationPipeline
 from .manager import JobManager
 from .models import (
@@ -296,6 +297,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if value and Path(value).is_file():
                 artifact_paths[key] = str(Path(value))
         payload["artifact_paths"] = artifact_paths
+        rendered_outputs = {}
+        raw_rendered_outputs = manifest.metadata.get("rendered_outputs", {})
+        if isinstance(raw_rendered_outputs, dict):
+            for mode, value in raw_rendered_outputs.items():
+                if value and Path(value).is_file():
+                    rendered_outputs[str(mode)] = str(Path(value))
+        payload["rendered_outputs"] = rendered_outputs
         payload["running"] = book_manager.is_running(manifest.id)
         payload["next_step"] = next(
             (
@@ -374,8 +382,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=400,
                 detail="只支持 PDF 或 EPUB。",
             )
-        if output_mode not in {"translated_only", "bilingual"}:
+        output_modes = {
+            "translated_only",
+            "bilingual",
+            *PAPER_OUTPUT_MODES,
+        }
+        if output_mode not in output_modes:
             raise HTTPException(status_code=400, detail="输出模式无效。")
+        if suffix != ".pdf" and output_mode in PAPER_OUTPUT_MODES:
+            raise HTTPException(
+                status_code=400,
+                detail="论文排版模式仅支持 PDF。",
+            )
         upload_dir = runtime_settings.runtime_dir / "book-uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
         temporary = upload_dir / f"{uuid.uuid4().hex}{suffix}"
@@ -457,14 +475,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
 
     @app.get("/api/books/{book_id}/download")
-    def download_book(book_id: str) -> FileResponse:
+    def download_book(book_id: str, mode: str | None = None) -> FileResponse:
         try:
             manifest = book_manager.store.get(book_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
-        if not manifest.output_path:
+        requested = None
+        if mode:
+            raw_outputs = manifest.metadata.get("rendered_outputs", {})
+            requested = (
+                raw_outputs.get(mode)
+                if isinstance(raw_outputs, dict)
+                else None
+            )
+            if not requested:
+                raise HTTPException(
+                    status_code=404,
+                    detail="这个排版版本尚未生成",
+                )
+        output_path = requested or manifest.output_path
+        if not output_path:
             raise HTTPException(status_code=409, detail="书籍尚未排版完成")
-        path = Path(manifest.output_path).resolve()
+        path = Path(output_path).resolve()
         if (
             book_manager.store.outputs_dir.resolve() not in path.parents
             or not path.is_file()

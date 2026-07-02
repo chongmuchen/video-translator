@@ -927,8 +927,13 @@
                 <select id="book-mode">
                   <option value="translated_only" selected>只保留译文</option>
                   <option value="bilingual">原文 + 译文对照</option>
+                  <option value="paper_translated_reflow">论文排版：纯译文重排（推荐）</option>
+                  <option value="paper_translated_reference">论文排版：按原页序纯译文</option>
+                  <option value="paper_bilingual_stacked">论文排版：上下对照重排</option>
+                  <option value="paper_reference">论文排版：参考原文左右对照</option>
+                  <option value="paper_reflow">论文排版：新文章式重排左右对照</option>
                 </select>
-                <p class="help">EPUB 按段落交替；PDF 在原固定版面文本块内加入原文和译文。</p>
+                <p class="help">EPUB 支持前两种；PDF 支持全部模式。双栏论文优先试“纯译文重排”；换排版只重建 PDF，不重新翻译。</p>
               </div>
               <div class="field">
                 <label for="book-target">目标语言</label>
@@ -2166,6 +2171,33 @@
       return labels[book.status] || book.status;
     }
 
+    const bookModeLabels = {
+      translated_only: "只保留译文",
+      bilingual: "原文+译文",
+      paper_translated_reflow: "论文排版·纯译文重排",
+      paper_translated_reference: "论文排版·按原页序纯译文",
+      paper_bilingual_stacked: "论文排版·上下对照",
+      paper_reference: "论文排版·参考原文",
+      paper_reflow: "论文排版·新文章式重排",
+    };
+
+    function bookModeLabel(mode) {
+      return bookModeLabels[mode] || mode || "未设置";
+    }
+
+    function bookModeOptionsFor(format) {
+      const basic = ["translated_only", "bilingual"];
+      if (format !== "pdf") return basic;
+      return [
+        "paper_translated_reflow",
+        "paper_translated_reference",
+        "paper_bilingual_stacked",
+        "paper_reference",
+        "paper_reflow",
+        ...basic,
+      ];
+    }
+
     function renderBooks() {
       const list = $("#book-list");
       list.replaceChildren();
@@ -2189,7 +2221,7 @@
         title.textContent = book.title;
         const meta = document.createElement("p");
         meta.textContent =
-          `${book.format.toUpperCase()} · ${bookStatus(book)} · ${book.id.slice(0, 8)}`;
+          `${book.format.toUpperCase()} · ${bookStatus(book)} · ${bookModeLabel(book.output_mode)} · ${book.id.slice(0, 8)}`;
         const error = document.createElement("p");
         error.style.color = "var(--red)";
         error.textContent = book.error || "";
@@ -2251,6 +2283,7 @@
       const render = progress.render || {};
       const summary = document.createElement("p");
       summary.textContent = [
+        `输出：${bookModeLabel(book.output_mode)}`,
         `下一步：${book.next_step || "无"}`,
         translate.total
           ? `翻译：${translate.translated || 0}/${translate.total}，剩 ${translate.pending || 0}`
@@ -2263,7 +2296,32 @@
       policy.textContent = book.running
         ? "书籍任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
         : "点“继续完成全部”会从缺失步骤继续：已抽取文本会复用；翻译会按目标语言、模型、策略和术语表的缓存键跳过未变化块；排版会重新生成输出文件。";
-      box.append(title, summary, policy);
+      const rerender = document.createElement("div");
+      rerender.className = "actions";
+      const modeSelect = document.createElement("select");
+      for (const mode of bookModeOptionsFor(book.format)) {
+        const option = document.createElement("option");
+        option.value = mode;
+        option.textContent = bookModeLabel(mode);
+        modeSelect.append(option);
+      }
+      modeSelect.value = book.output_mode || (
+        book.format === "pdf" ? "paper_translated_reflow" : "translated_only"
+      );
+      const rerenderButton = document.createElement("button");
+      rerenderButton.type = "button";
+      rerenderButton.className = "primary";
+      rerenderButton.textContent = "用所选模式重新排版";
+      rerenderButton.disabled = book.running || !(book.completed_steps || []).includes("translate");
+      rerenderButton.addEventListener("click", () => {
+        $("#book-mode").value = modeSelect.value;
+        runBook(book.id, "steps/render");
+      });
+      const rerenderHint = document.createElement("span");
+      rerenderHint.className = "legal";
+      rerenderHint.textContent = "只重建 PDF/EPUB，不重新翻译；已生成版本会保留在下面。";
+      rerender.append(modeSelect, rerenderButton, rerenderHint);
+      box.append(title, summary, policy, rerender);
       const paths = book.artifact_paths || {};
       addJobPathLine(box, "任务目录", book.directory_path);
       addJobPathLine(box, "任务清单", book.manifest_path);
@@ -2275,6 +2333,15 @@
         paths.output || book.output_path,
         book.download_ready ? `/api/books/${book.id}/download` : null
       );
+      const renderedOutputs = book.rendered_outputs || {};
+      for (const [mode, path] of Object.entries(renderedOutputs)) {
+        addJobPathLine(
+          box,
+          `已生成版本：${bookModeLabel(mode)}`,
+          path,
+          `/api/books/${book.id}/download?mode=${encodeURIComponent(mode)}`
+        );
+      }
     }
 
     async function refreshBooks() {

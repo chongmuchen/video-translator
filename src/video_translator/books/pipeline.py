@@ -12,7 +12,7 @@ from ..settings import Settings
 from ..pipeline.translator import SegmentTranslator
 from .epub import extract_epub, render_epub
 from .models import BookBlock, BookManifest, BookOutputMode, BookStatus
-from .pdf import extract_pdf, render_pdf
+from .pdf import PAPER_OUTPUT_MODES, extract_pdf, render_pdf
 from .store import BookStore
 
 
@@ -226,6 +226,8 @@ class BookTranslationPipeline:
         blocks = self.store.read_blocks(manifest)
         if any(not block.translated_text for block in blocks):
             raise PipelineError("仍有书籍文本块没有译文。")
+        if manifest.format != "pdf" and mode in PAPER_OUTPUT_MODES:
+            raise PipelineError("论文排版模式仅支持 PDF。")
         suffix = ".pdf" if manifest.format == "pdf" else ".epub"
         output = self.store.outputs_dir / (
             f"{manifest.title}-zh-{mode}-{manifest.id[:8]}{suffix}"
@@ -251,6 +253,12 @@ class BookTranslationPipeline:
                 )
             manifest.output_mode = mode
             manifest.output_path = str(output)
+            rendered_outputs = manifest.metadata.setdefault(
+                "rendered_outputs",
+                {},
+            )
+            if isinstance(rendered_outputs, dict):
+                rendered_outputs[mode] = str(output)
             manifest.status = BookStatus.rendered
             if "render" not in manifest.completed_steps:
                 manifest.completed_steps.append("render")
