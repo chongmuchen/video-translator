@@ -248,14 +248,14 @@ make mux JOB_ID='任务ID'
 | CLI | ✅ | 原 CLI 加根目录 `main.py`：批量下载、分步执行、状态、断点恢复、完整运行 | 冒烟测试及本地 download→extract 验证 | 更完善的交互式界面 |
 | Web/API | ✅ | 视频/书籍任务列表、模板自动执行、钥匙串密钥、参数说明、日志、片段预览和输出下载 | API 自动化测试、真实历史任务加载 | 任务取消和合集批量操作 |
 | EPUB 书籍翻译 | 🟡 | 按 spine 抽取、逐批翻译、保留图片/CSS/链接；纯译文或段落双语；重建导航文本 | 含图片和目录链接的 EPUB 自动化测试 | 大型复杂 EPUB 与不同阅读器人工验收 |
-| PDF 书籍翻译 | 🟡 | 内置固定页数覆盖排版、保留原页图片、中文字体嵌入、纯译文或块内双语、目录标题更新；复杂 PDF 计划接入 BabelDOC/PDFMathTranslate 外部引擎 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 扫描件 OCR、复杂彩色背景、极端密排页面，以及外部 PDF 引擎集成 |
+| PDF 书籍翻译 | 🟡 | 内置固定页数覆盖排版、保留原页图片、中文字体嵌入、纯译文或块内双语、目录标题更新；扫描 PDF 可通过 OCRmyPDF 先生成文字层；复杂 PDF 可用 BabelDOC/PDFMathTranslate 外部引擎 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 复杂彩色背景、极端密排页面、扫描件表格/公式结构化 OCR |
 | 书籍中间缓存 | ✅ | 导入→抽取→翻译→排版独立执行；文本块、译文哈希和逐批断点长期保留 | 改排版模式不重复翻译的自动化测试 | 缓存清理和版本迁移工具 |
 | 任务状态与日志 | ✅ | 单机 JSON manifest、每任务日志和中间文件 | JobStore 单元测试 | 数据库、恢复和分布式队列 |
 | 多说话人/多音色 | ⬜ | 尚未实现 | — | diarization、说话人到音色映射 |
 | 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
 | 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
 
-当前自动化测试基线：**64 项测试通过**。
+当前自动化测试基线：**75 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -1018,6 +1018,24 @@ make book-run \
   BOOK_CODEX_STRATEGY=quality
 ```
 
+扫描版 PDF 一键运行：
+
+```bash
+# 默认 auto：普通 PDF 不 OCR；扫描版没有文字时自动 OCR
+make book-run \
+  BOOK_FILE='/绝对路径/scanned.pdf' \
+  BOOK_MODE=translated_only \
+  BOOK_OCR_MODE=auto \
+  BOOK_OCR_LANGUAGES=eng
+
+# 中英混排扫描件
+make book-run \
+  BOOK_FILE='/绝对路径/scanned-cn-en.pdf' \
+  BOOK_MODE=translated_only \
+  BOOK_OCR_MODE=auto \
+  BOOK_OCR_LANGUAGES=chi_sim+eng
+```
+
 论文高保真一键运行：
 
 ```bash
@@ -1075,6 +1093,10 @@ make book-status BOOK_ID='书籍任务ID'
 
 - EPUB 按 OPF spine 读取章节，保留原图、CSS、资源和内部链接；目录使用链接而非
   固定页码，翻译目录标题后仍指向原章节位置；
+- 扫描版 PDF 会先尝试正常抽取文本；没有可抽取文本时，`BOOK_OCR_MODE=auto`
+  会调用 OCRmyPDF 生成带文字层的中间 PDF，再复用现有翻译/排版流程。中间文件保存在
+  `data/books/jobs/{书名}--{ID}/ocr/`，包括 `source-ocr.pdf`、`source-ocr.txt`
+  和 `ocrmypdf.log`；
 - 专业 PDF 模式调用 PDFMathTranslate / BabelDOC；首次运行会通过 `uv` 准备
   Python 3.12 隔离环境、DocLayout 模型和中文字体。Fast 后端通常更快且不会额外
   加页眉说明；BabelDOC 后端更接近新一代语义/版面 IR，但可能在页顶加入来源说明；
@@ -1083,8 +1105,32 @@ make book-status BOOK_ID='书籍任务ID'
   目录标题会随译文更新；
 - 因 PDF 采用固定页数，原页码不会发生漂移；内容过密无法在最低字号内装下时，
   任务 metadata 会记录 `layout_warnings`，应人工检查对应页面；
-- 扫描版 PDF 当前没有 OCR；复杂彩色背景、环绕图文和多栏学术排版仍需人工校样。
-  严谨出版的最终版本应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
+- 复杂彩色背景、环绕图文、多栏扫描件和低清晰度扫描仍需人工校样。OCRmyPDF
+  基于 Tesseract，主要解决“先让扫描 PDF 有文字可翻译”；表格、公式和阅读顺序的
+  结构化 OCR 后续会接 Docling/Marker/PaddleOCR 这类更重的后端。严谨出版的最终版本
+  应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
+
+OCR 依赖安装：
+
+```bash
+# macOS
+brew install tesseract tesseract-lang ghostscript
+./scripts/bootstrap.sh
+```
+
+OCR 模式说明：
+
+| 选项 | 含义 | 推荐场景 |
+| --- | --- | --- |
+| `auto` | 先正常抽取；没有文字时才 OCR | 默认推荐 |
+| `always` | 强制对 PDF 重新 OCR | 原 PDF 文字层很差、错乱或不可用 |
+| `never` | 禁止 OCR | 快速测试，或不想调用外部 OCR |
+
+OCR 语言：
+
+- 英文论文：`eng`
+- 简体中文：`chi_sim`
+- 中英混排：`chi_sim+eng`
 
 论文排版当前开发进展：
 
@@ -1110,9 +1156,11 @@ make book-status BOOK_ID='书籍任务ID'
   的每一种论文版本，便于下载对比。
 - 已完成：如果原 PDF 页面含图片/图表，任务 metadata 会记录排版警告，提醒最终版
   对照原 PDF 校样。
-- 未完成：扫描版论文 OCR、专业引擎的逐页质量评分、批量论文排序/标签/阅读队列。
+- 已完成：扫描版 PDF 的 OCRmyPDF 文字层生成和自动抽取 fallback。
+- 未完成：扫描版论文的结构化 OCR、专业引擎的逐页质量评分、批量论文排序/标签/阅读队列。
   公式、图表、表格、脚注和双栏浮动体应优先使用 `pdf2zh_*` / `babeldoc_*`
-  专业模式，而不是内置 `paper_*` 草稿模式。
+  专业模式；扫描件如果需要表格/公式结构化识别，后续应使用 Docling/Marker/PaddleOCR
+  高级后端，而不是内置 `paper_*` 草稿模式。
 
 ### 9B. 论文音频博客 / 讲解播客
 
@@ -1152,7 +1200,8 @@ data/paper-podcasts/outputs/
 - 讲解脚本的缓存键包含论文文本、目标语言、风格、时长、术语表、provider、模型和
   Codex 策略；这些不变时继续执行不会重复生成脚本；
 - 更换音色或 TTS 后端时，可以只重跑“3. 音频”，不会重新生成脚本；
-- 如果是扫描版 PDF，目前会在抽取阶段失败，后续需要 OCR。
+- 如果是扫描版 PDF，建议先在书籍翻译里使用 OCRmyPDF 抽取；论文播客后续也会复用
+  同一套 OCR 抽取能力。
 
 备用命令行：
 
@@ -1172,6 +1221,18 @@ make paper-podcast-run \
 
 PDF / 论文翻译开源引擎调研：
 
+- [OCRmyPDF](https://ocrmypdf.readthedocs.io/)：第一版已接入。它把 OCR
+  文字层写回扫描 PDF，生成可搜索、可抽取文本的 PDF；底层使用 Tesseract。优点是稳、
+  与现有 PDF 翻译链路兼容；局限是 Tesseract 不擅长复杂阅读顺序、段落结构、手写体、
+  低质量扫描和表格/公式语义。
+- [Docling](https://github.com/docling-project/docling)：适合作为第二阶段结构化抽取。
+  它支持扫描 PDF 和图片 OCR、阅读顺序、表格结构、图表理解，并可导出 Markdown/JSON。
+- [Marker](https://github.com/datalab-to/marker)：适合作为“PDF/图片 → Markdown/JSON”
+  的高级抽取引擎，支持表格、公式、图片保存，也支持 GPU/CPU/MPS；但许可证和商业使用
+  需要单独评估。
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)：OCR/文档解析能力强，
+  支持 100+ 语言、PP-Structure、PDF/图片到结构化数据；适合后续做中文扫描件、表格
+  和复杂版面的增强 OCR。
 - [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)：
   Python 项目，定位是保留公式、图表、目录和注释的 PDF 翻译，提供命令行、UI
   和 Docker。README 中的本地命令行示例是 `uv tool install --python 3.12 pdf2zh`

@@ -28,6 +28,7 @@ media = ["static-ffmpeg>=3,<4"]
 separation = ["demucs>=4,<5"]
 books = [
   "lxml>=5,<7",
+  "ocrmypdf>=17,<18",
   "pymupdf>=1.26,<2",
   "uv>=0.11,<1",
 ]

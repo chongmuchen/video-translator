@@ -66,7 +66,11 @@ class BookManager:
         ):
             raise RuntimeError("排版前必须先完成书籍翻译。")
         if step == BookStep.extract:
-            function = lambda: pipeline.extract(manifest)
+            function = lambda: pipeline.extract(
+                manifest,
+                ocr_mode=request.ocr_mode,
+                ocr_languages=request.ocr_languages,
+            )
         elif step == BookStep.translate:
             function = lambda: pipeline.translate(
                 manifest,
@@ -100,7 +104,11 @@ class BookManager:
                     target_language=request.target_language,
                 )
             if "extract" not in current.completed_steps:
-                pipeline.extract(current)
+                pipeline.extract(
+                    current,
+                    ocr_mode=request.ocr_mode,
+                    ocr_languages=request.ocr_languages,
+                )
             current = self.store.get(book_id)
             # Translation hashes make this a no-op when content settings did
             # not change, while still invalidating only affected blocks when

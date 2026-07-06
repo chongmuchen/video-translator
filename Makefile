@@ -78,6 +78,8 @@ BOOK_MODE ?= translated_only
 BOOK_PROVIDER ?= codex_cli
 BOOK_CODEX_STRATEGY ?= quality
 BOOK_ARGS ?=
+BOOK_OCR_MODE ?= auto
+BOOK_OCR_LANGUAGES ?= eng
 PAPER_FILE ?=
 PAPER_PODCAST_ID ?=
 PAPER_PODCAST_STYLE ?= deep_dive
@@ -163,9 +165,10 @@ help:
 	@echo
 	@echo "PDF / EPUB 书籍翻译："
 	@echo "  make book-run BOOK_FILE='/path/book.pdf' BOOK_MODE=translated_only"
+	@echo "  make book-run BOOK_FILE='/path/scanned.pdf' BOOK_OCR_MODE=auto BOOK_OCR_LANGUAGES=eng"
 	@echo "  make book-run BOOK_FILE='/path/paper.pdf' BOOK_MODE=pdf2zh_bing_mono"
 	@echo "  make book-import BOOK_FILE='/path/book.epub'"
-	@echo "  make book-extract BOOK_ID='任务ID'"
+	@echo "  make book-extract BOOK_ID='任务ID' BOOK_OCR_MODE=auto"
 	@echo "  make book-translate BOOK_ID='任务ID' BOOK_PROVIDER=codex_cli BOOK_CODEX_STRATEGY=quality"
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=bilingual"
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=pdf2zh_bing_mono"
@@ -277,6 +280,8 @@ book-run:
 	$(BOOK_CLI) run "$(BOOK_FILE)" \
 		--mode "$(BOOK_MODE)" \
 		--target-language "$(TARGET_LANGUAGE)" \
+		--ocr-mode "$(BOOK_OCR_MODE)" \
+		--ocr-languages "$(BOOK_OCR_LANGUAGES)" \
 		--provider "$(BOOK_PROVIDER)" \
 		--codex-strategy "$(BOOK_CODEX_STRATEGY)" \
 		$(GLOSSARY_ARG) $(BOOK_ARGS)
@@ -289,7 +294,9 @@ book-import:
 book-extract:
 	@test -n "$(strip $(BOOK_ID))" || \
 		(echo "错误：缺少 BOOK_ID。" >&2; exit 2)
-	$(BOOK_CLI) extract "$(BOOK_ID)"
+	$(BOOK_CLI) extract "$(BOOK_ID)" \
+		--ocr-mode "$(BOOK_OCR_MODE)" \
+		--ocr-languages "$(BOOK_OCR_LANGUAGES)"
 
 book-translate:
 	@test -n "$(strip $(BOOK_ID))" || \

@@ -45,6 +45,8 @@ BookOutputMode = Literal[
     "babeldoc_minimax_dual",
 ]
 
+BookOcrMode = Literal["auto", "always", "never"]
+
 
 class BookStatus(str, Enum):
     imported = "imported"
@@ -101,6 +103,8 @@ class BookManifest(BaseModel):
 class BookStepRequest(BaseModel):
     target_language: str = "简体中文"
     output_mode: BookOutputMode = "translated_only"
+    ocr_mode: BookOcrMode = "auto"
+    ocr_languages: str = "eng"
     glossary: dict[str, str] = Field(default_factory=dict)
     settings: RuntimeSettingsUpdate = Field(
         default_factory=RuntimeSettingsUpdate

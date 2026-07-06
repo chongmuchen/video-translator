@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from .errors import InvalidSourceError, VideoTranslatorError
 from .books.manager import BookManager
 from .books.models import BookStep, BookStepRequest
+from .books.ocr import check_ocr_environment
 from .books.pdf import PAPER_OUTPUT_MODES
 from .books.pipeline import BookTranslationPipeline
 from .books.professional_pdf import PROFESSIONAL_PDF_OUTPUT_MODES
@@ -262,10 +263,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict:
+        ocr = check_ocr_environment(
+            runtime_settings,
+            required_languages=("eng", "chi_sim"),
+        )
         return {
             "status": "ok",
             "storage": "local",
             "data_directory": str(runtime_settings.data_dir),
+            "ocr": {
+                "available": ocr.available,
+                "ocrmypdf": ocr.ocrmypdf,
+                "tesseract": ocr.tesseract,
+                "ghostscript": ocr.ghostscript,
+                "languages": ocr.languages,
+                "missing_languages": ocr.missing_languages,
+            },
         }
 
     @app.post("/api/secrets/translator-api-key")
@@ -303,6 +316,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "source": manifest.source_path,
             "blocks": manifest.blocks_path,
             "output": manifest.output_path,
+            "ocr_pdf": manifest.metadata.get("ocr_source_path"),
+            "ocr_text": manifest.metadata.get("ocr_sidecar_path"),
+            "ocr_log": manifest.metadata.get("ocr_log_path"),
         }.items():
             if value and Path(value).is_file():
                 artifact_paths[key] = str(Path(value))
@@ -368,6 +384,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "extract": {
                 "done": "extract" in manifest.completed_steps,
                 "blocks": total,
+                "ocr_used": bool(manifest.metadata.get("ocr_used")),
+                "ocr_mode": manifest.metadata.get("ocr_mode"),
+                "ocr_languages": manifest.metadata.get("ocr_languages"),
             },
             "translate": {
                 "done": "translate" in manifest.completed_steps,

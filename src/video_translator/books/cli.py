@@ -83,6 +83,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--target-language", default="简体中文")
     run.add_argument("--glossary")
+    run.add_argument(
+        "--ocr-mode",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="PDF OCR 模式：auto=无文字时自动 OCR，always=强制 OCR，never=禁用",
+    )
+    run.add_argument(
+        "--ocr-languages",
+        default="eng",
+        help="Tesseract/OCRmyPDF 语言，例如 eng 或 chi_sim+eng",
+    )
 
     imported = commands.add_parser("import", help="只导入书籍")
     imported.add_argument("source")
@@ -94,6 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     extract = commands.add_parser("extract", help="抽取结构和文本")
     extract.add_argument("book_id")
+    extract.add_argument(
+        "--ocr-mode",
+        choices=["auto", "always", "never"],
+        default="auto",
+    )
+    extract.add_argument("--ocr-languages", default="eng")
 
     translate = commands.add_parser("translate", help="翻译并逐批缓存")
     translate.add_argument("book_id")
@@ -149,6 +166,8 @@ def main() -> None:
                 output_mode=args.mode,
                 target_language=args.target_language,
                 glossary=_glossary(args.glossary),
+                ocr_mode=args.ocr_mode,
+                ocr_languages=args.ocr_languages,
             )
         elif args.command == "import":
             manifest = pipeline.import_book(
@@ -156,7 +175,11 @@ def main() -> None:
                 output_mode=args.mode,
             )
         elif args.command == "extract":
-            manifest = pipeline.extract(store.get(args.book_id))
+            manifest = pipeline.extract(
+                store.get(args.book_id),
+                ocr_mode=args.ocr_mode,
+                ocr_languages=args.ocr_languages,
+            )
         elif args.command == "translate":
             manifest = pipeline.translate(
                 store.get(args.book_id),

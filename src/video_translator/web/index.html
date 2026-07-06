@@ -970,6 +970,21 @@
                 <input id="book-target" value="简体中文">
               </div>
               <div class="field">
+                <label for="book-ocr-mode">PDF OCR 处理</label>
+                <select id="book-ocr-mode">
+                  <option value="auto" selected>自动：无可抽取文本时 OCR（推荐）</option>
+                  <option value="always">强制 OCR</option>
+                  <option value="never">禁用 OCR</option>
+                </select>
+                <p class="help">用于扫描版 PDF。OCR 会先生成带文字层的 PDF，再复用当前翻译流程；专业 PDFMathTranslate/BabelDOC 模式暂不走这里。</p>
+              </div>
+              <div class="field">
+                <label for="book-ocr-languages">OCR 语言</label>
+                <input id="book-ocr-languages" value="eng"
+                  placeholder="eng 或 chi_sim+eng">
+                <p class="help">英文论文用 eng；中英混排用 chi_sim+eng。需要安装对应 Tesseract 语言包。</p>
+              </div>
+              <div class="field">
                 <label for="book-provider">翻译后端</label>
                 <select id="book-provider">
                   <option value="codex_cli" selected>Codex Plus</option>
@@ -2351,6 +2366,8 @@
       const payload = {
         target_language: $("#book-target").value.trim() || "简体中文",
         output_mode: $("#book-mode").value,
+        ocr_mode: $("#book-ocr-mode").value,
+        ocr_languages: $("#book-ocr-languages").value.trim() || "eng",
         glossary,
         settings,
       };
@@ -2808,12 +2825,18 @@
       const title = document.createElement("strong");
       title.textContent = "当前书籍任务进度与文件位置";
       const progress = book.step_progress || {};
+      const extract = progress.extract || {};
       const translate = progress.translate || {};
       const render = progress.render || {};
       const summary = document.createElement("p");
       summary.textContent = [
         `输出：${bookModeLabel(book.output_mode)}`,
         `下一步：${book.next_step || "无"}`,
+        extract.ocr_used
+          ? `OCR：已使用 ${extract.ocr_languages || ""}`
+          : extract.ocr_mode
+            ? `OCR：${extract.ocr_mode}`
+            : "OCR：未使用",
         translate.total
           ? `翻译：${translate.translated || 0}/${translate.total}，剩 ${translate.pending || 0}`
           : "翻译：等待抽取文本",
@@ -2862,6 +2885,9 @@
       addJobPathLine(box, "任务目录", book.directory_path);
       addJobPathLine(box, "任务清单", book.manifest_path);
       addJobPathLine(box, "原书文件", paths.source);
+      addJobPathLine(box, "OCR 后 PDF", paths.ocr_pdf);
+      addJobPathLine(box, "OCR 识别文本", paths.ocr_text);
+      addJobPathLine(box, "OCR 日志", paths.ocr_log);
       addJobPathLine(box, "文本块", paths.blocks);
       addJobPathLine(
         box,

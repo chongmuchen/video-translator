@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pymupdf
 
+from video_translator.errors import PipelineError
 from video_translator.books.epub import extract_epub, render_epub
-from video_translator.books.models import BookStatus
+from video_translator.books.models import BookBlock, BookStatus
 from video_translator.books.pdf import extract_pdf, render_pdf
 from video_translator.books.pipeline import BookTranslationPipeline
 from video_translator.books.store import BookStore
@@ -291,3 +292,77 @@ def test_book_pipeline_professional_pdf_skips_internal_translation(
     assert "render" in manifest.completed_steps
     assert manifest.blocks_path is None
     assert "pdf2zh_bing_dual" in manifest.metadata["rendered_outputs"]
+
+
+def test_book_extract_auto_ocr_when_pdf_has_no_text(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(b"%PDF-1.4 scanned")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        translator_provider="passthrough",
+    )
+    store = BookStore(settings)
+    pipeline = BookTranslationPipeline(settings, store)
+    manifest = pipeline.import_book(source, output_mode="translated_only")
+    calls = {"extract": 0}
+
+    def fake_extract_pdf(path: Path):
+        calls["extract"] += 1
+        if calls["extract"] == 1:
+            raise PipelineError("PDF 没有可提取文本；扫描版 PDF 需要 OCR")
+        return (
+            [
+                BookBlock(
+                    id="ocr-1",
+                    order=0,
+                    source_text="Scanned text",
+                    page=1,
+                    bbox=(10, 10, 100, 40),
+                )
+            ],
+            {"page_count": 1},
+        )
+
+    def fake_ocr(source, job_dir, *, settings, languages, force):
+        ocr_pdf = job_dir / "ocr" / "source-ocr.pdf"
+        sidecar = job_dir / "ocr" / "source-ocr.txt"
+        log = job_dir / "ocr" / "ocrmypdf.log"
+        ocr_pdf.parent.mkdir(parents=True, exist_ok=True)
+        ocr_pdf.write_bytes(b"%PDF-1.4 ocr")
+        sidecar.write_text("Scanned text", encoding="utf-8")
+        log.write_text("ok", encoding="utf-8")
+        return type(
+            "OcrResult",
+            (),
+            {
+                "pdf_path": ocr_pdf,
+                "sidecar_path": sidecar,
+                "log_path": log,
+            },
+        )()
+
+    monkeypatch.setattr(
+        "video_translator.books.pipeline.extract_pdf",
+        fake_extract_pdf,
+    )
+    monkeypatch.setattr(
+        "video_translator.books.pipeline.run_ocrmypdf",
+        fake_ocr,
+    )
+
+    manifest = pipeline.extract(
+        manifest,
+        ocr_mode="auto",
+        ocr_languages="eng",
+    )
+
+    assert calls["extract"] == 2
+    assert manifest.status == BookStatus.extracted
+    assert manifest.metadata["ocr_used"] is True
+    assert manifest.metadata["ocr_reason"] == "empty_text_fallback"
+    assert Path(manifest.metadata["ocr_source_path"]).is_file()
+    assert store.read_blocks(manifest)[0].source_text == "Scanned text"

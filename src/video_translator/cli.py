@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from .books.ocr import check_ocr_environment
 from .errors import VideoTranslatorError
 from .manager import JobManager
 from .models import PipelineOptions
@@ -74,6 +75,33 @@ def doctor(settings: Settings) -> int:
     deno = deno or (str(venv_deno) if venv_deno.is_file() else None)
     failed = failed or not deno
     _print_check("Deno / YouTube JS", bool(deno), deno or "未安装")
+
+    ocr = check_ocr_environment(
+        settings,
+        required_languages=("eng", "chi_sim"),
+    )
+    failed = failed or not ocr.available
+    _print_check("OCRmyPDF", bool(ocr.ocrmypdf), ocr.ocrmypdf or "未安装")
+    _print_check(
+        "Tesseract OCR",
+        bool(ocr.tesseract),
+        ocr.tesseract or "未安装",
+    )
+    _print_check(
+        "Ghostscript",
+        bool(ocr.ghostscript),
+        ocr.ghostscript or "未安装",
+    )
+    language_detail = (
+        f"可用 {len(ocr.languages)} 种；缺少 {','.join(ocr.missing_languages)}"
+        if ocr.missing_languages
+        else (
+            "eng/chi_sim 可用"
+            if {"eng", "chi_sim"}.issubset(set(ocr.languages))
+            else f"可用 {len(ocr.languages)} 种"
+        )
+    )
+    _print_check("OCR 语言", not ocr.missing_languages, language_detail)
 
     if settings.translator_provider == "passthrough":
         _print_check("翻译服务", False, "passthrough 仅用于测试，不会翻译")

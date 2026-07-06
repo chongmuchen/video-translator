@@ -12,6 +12,7 @@ from ..settings import Settings
 from ..pipeline.translator import SegmentTranslator
 from .epub import extract_epub, render_epub
 from .models import BookBlock, BookManifest, BookOutputMode, BookStatus
+from .ocr import run_ocrmypdf
 from .pdf import PAPER_OUTPUT_MODES, extract_pdf, render_pdf
 from .professional_pdf import (
     PROFESSIONAL_PDF_OUTPUT_MODES,
@@ -21,6 +22,7 @@ from .store import BookStore
 
 
 BOOK_PROMPT_VERSION = "book-v1"
+EMPTY_PDF_TEXT_MARKER = "PDF 没有可提取文本"
 
 
 class BookTranslationPipeline:
@@ -45,11 +47,22 @@ class BookTranslationPipeline:
             title=title,
         )
 
-    def extract(self, manifest: BookManifest) -> BookManifest:
+    def extract(
+        self,
+        manifest: BookManifest,
+        *,
+        ocr_mode: str = "auto",
+        ocr_languages: str = "eng",
+    ) -> BookManifest:
         try:
             source = Path(manifest.source_path)
             if manifest.format == "pdf":
-                blocks, metadata = extract_pdf(source)
+                blocks, metadata = self._extract_pdf_with_optional_ocr(
+                    manifest,
+                    source,
+                    ocr_mode=ocr_mode,
+                    ocr_languages=ocr_languages,
+                )
             else:
                 blocks, metadata = extract_epub(
                     source,
@@ -65,6 +78,76 @@ class BookTranslationPipeline:
         except Exception as exc:
             self.store.fail(manifest, exc)
             raise
+
+    def _extract_pdf_with_optional_ocr(
+        self,
+        manifest: BookManifest,
+        source: Path,
+        *,
+        ocr_mode: str,
+        ocr_languages: str,
+    ) -> tuple[list[BookBlock], dict]:
+        selected_mode = ocr_mode if ocr_mode in {"auto", "always", "never"} else "auto"
+        selected_languages = ocr_languages.strip() or "eng"
+        metadata: dict = {
+            "ocr_mode": selected_mode,
+            "ocr_languages": selected_languages,
+            "ocr_used": False,
+        }
+        if selected_mode == "always":
+            result = run_ocrmypdf(
+                source,
+                self.store.job_dir(manifest.id),
+                settings=self.settings,
+                languages=selected_languages,
+                force=True,
+            )
+            blocks, extracted = extract_pdf(result.pdf_path)
+            extracted.update(metadata)
+            extracted.update(
+                {
+                    "ocr_used": True,
+                    "ocr_reason": "forced",
+                    "ocr_source_path": str(result.pdf_path),
+                    "ocr_sidecar_path": str(result.sidecar_path),
+                    "ocr_log_path": str(result.log_path),
+                }
+            )
+            return blocks, extracted
+
+        try:
+            blocks, extracted = extract_pdf(source)
+            extracted.update(metadata)
+            return blocks, extracted
+        except PipelineError as exc:
+            if (
+                selected_mode == "never"
+                or EMPTY_PDF_TEXT_MARKER not in str(exc)
+            ):
+                raise
+            self.logger.info(
+                "PDF 没有可提取文本，自动调用 OCRmyPDF：%s",
+                manifest.id,
+            )
+            result = run_ocrmypdf(
+                source,
+                self.store.job_dir(manifest.id),
+                settings=self.settings,
+                languages=selected_languages,
+                force=False,
+            )
+            blocks, extracted = extract_pdf(result.pdf_path)
+            extracted.update(metadata)
+            extracted.update(
+                {
+                    "ocr_used": True,
+                    "ocr_reason": "empty_text_fallback",
+                    "ocr_source_path": str(result.pdf_path),
+                    "ocr_sidecar_path": str(result.sidecar_path),
+                    "ocr_log_path": str(result.log_path),
+                }
+            )
+            return blocks, extracted
 
     def _translation_key(
         self,
@@ -323,6 +406,8 @@ class BookTranslationPipeline:
         output_mode: BookOutputMode,
         target_language: str,
         glossary: dict[str, str],
+        ocr_mode: str = "auto",
+        ocr_languages: str = "eng",
     ) -> BookManifest:
         manifest = self.import_book(source, output_mode=output_mode)
         if output_mode in PROFESSIONAL_PDF_OUTPUT_MODES:
@@ -331,7 +416,11 @@ class BookTranslationPipeline:
                 mode=output_mode,
                 target_language=target_language,
             )
-        self.extract(manifest)
+        self.extract(
+            manifest,
+            ocr_mode=ocr_mode,
+            ocr_languages=ocr_languages,
+        )
         self.translate(
             manifest,
             target_language=target_language,
