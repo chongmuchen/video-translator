@@ -253,6 +253,14 @@ def _copy_if_available(source: Path, output: Path) -> None:
     shutil.copy2(source, output)
 
 
+def _process_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 def render_professional_pdf(
     source: Path,
     selected_output: Path,
@@ -324,7 +332,7 @@ def render_professional_pdf(
         )
     except subprocess.TimeoutExpired as exc:
         log_path.write_text(
-            (exc.stdout or "") + "\n" + (exc.stderr or ""),
+            _process_text(exc.stdout) + "\n" + _process_text(exc.stderr),
             encoding="utf-8",
         )
         raise PipelineError(

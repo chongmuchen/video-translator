@@ -1101,8 +1101,14 @@ make book-run \
   BOOK_FILE='/绝对路径/paper.pdf' \
   BOOK_MODE=pdf2zh_bing_mono \
   BOOK_PROVIDER=codex_cli \
-  BOOK_CODEX_STRATEGY=quality
+  BOOK_CODEX_STRATEGY=quality \
+  TRANSLATOR_TIMEOUT_SECONDS=600
 ```
+
+`TRANSLATOR_TIMEOUT_SECONDS=600` 会让专业 PDF 引擎最长等待约 60 分钟
+（内部上限约为该值 × 6）。Llama 3 Herd 这类 90 页以上论文使用
+PDFMathTranslate/BabelDOC + Bing 免 Key 时，默认 180 秒配置对应的约 18 分钟
+可能不够。
 
 首次建议在网页测试一篇 5～12 页论文：
 

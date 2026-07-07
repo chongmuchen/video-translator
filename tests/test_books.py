@@ -1,4 +1,5 @@
 import base64
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from video_translator.books.epub import extract_epub, render_epub
 from video_translator.books.models import BookBlock, BookStatus
 from video_translator.books.pdf import extract_pdf, render_pdf
 from video_translator.books.pipeline import BookTranslationPipeline
+from video_translator.books import professional_pdf
+from video_translator.books.professional_pdf import render_professional_pdf
 from video_translator.books.store import BookStore
 from video_translator.settings import Settings
 
@@ -292,6 +295,61 @@ def test_book_pipeline_professional_pdf_skips_internal_translation(
     assert "render" in manifest.completed_steps
     assert manifest.blocks_path is None
     assert "pdf2zh_bing_dual" in manifest.metadata["rendered_outputs"]
+
+
+def test_professional_pdf_timeout_decodes_bytes_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        translator_provider="passthrough",
+    )
+    job_dir = tmp_path / "job"
+    outputs_dir = tmp_path / "outputs"
+    job_dir.mkdir()
+    outputs_dir.mkdir()
+    monkeypatch.setattr(
+        professional_pdf,
+        "_uv_binary",
+        lambda settings: "/usr/bin/uv",
+    )
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=args[0],
+            timeout=1,
+            output=b"partial stdout",
+            stderr=b"partial stderr",
+        )
+
+    monkeypatch.setattr(professional_pdf.subprocess, "run", fake_run)
+
+    try:
+        render_professional_pdf(
+            source,
+            outputs_dir / "translated.pdf",
+            mode="pdf2zh_bing_dual",
+            settings=settings,
+            job_dir=job_dir,
+            outputs_dir=outputs_dir,
+            title="Paper",
+            book_id="1234567890abcdef",
+            target_language="简体中文",
+        )
+    except PipelineError as exc:
+        assert "专业 PDF 引擎超时" in str(exc)
+    else:
+        raise AssertionError("expected PipelineError")
+
+    log_text = (job_dir / "professional-pdf-pdf2zh_bing_dual.log").read_text(
+        encoding="utf-8"
+    )
+    assert "partial stdout" in log_text
+    assert "partial stderr" in log_text
 
 
 def test_book_extract_auto_ocr_when_pdf_has_no_text(

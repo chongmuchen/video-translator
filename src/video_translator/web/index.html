@@ -1018,6 +1018,12 @@
                 </select>
               </div>
               <div class="field">
+                <label for="book-translator-timeout">书籍 / 专业PDF超时（秒）</label>
+                <input id="book-translator-timeout" type="number"
+                  min="60" max="7200" step="60" value="600">
+                <p class="help">长论文推荐 600。专业 PDF 引擎最长等待约为该值 × 6；92 页论文可能需要 30～60 分钟。</p>
+              </div>
+              <div class="field">
                 <label for="book-base-url">接口地址</label>
                 <input id="book-base-url"
                   value="http://127.0.0.1:11434/v1">
@@ -2472,6 +2478,8 @@
       const settings = {
         translator_provider: provider,
         translator_codex_strategy: $("#book-codex-strategy").value,
+        translator_timeout_seconds:
+          Number($("#book-translator-timeout").value) || 600,
         translation_batch_size:
           provider === "codex_cli" ? 24 : 12,
       };
