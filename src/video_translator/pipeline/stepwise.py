@@ -8,13 +8,22 @@ import re
 from enum import Enum
 from pathlib import Path
 
-from ..errors import InvalidSourceError, PipelineError, VideoTranslatorError
+from ..control import mark_canceled, raise_if_canceled
+from ..errors import (
+    InvalidSourceError,
+    PipelineCanceled,
+    PipelineError,
+    VideoTranslatorError,
+)
 from ..logging_utils import create_job_logger
+from ..metrics import record_step_metric, write_quality_report
 from ..models import JobManifest, JobStatus, Segment
 from ..runtime import MediaBinaries, resolve_media_binaries
 from ..settings import Settings
 from ..store import JobStore
 from .downloader import acquire_source
+from .diarization import diarize_segments
+from .lip_sync import apply_lip_sync
 from .media import (
     compose_dub_timeline,
     extract_original_audio,
@@ -66,15 +75,10 @@ STEP_DESCRIPTIONS = {
 
 # TODO: These are intentionally visible through ``python main.py plan``.
 TODO_ITEMS = [
-    ("P0", "接通 Ollama/兼容 LLM，验证真实翻译和术语表"),
-    ("P1", "翻译过长时自动缩写并重新生成 TTS，而不是最终裁尾"),
-    ("P1", "为下载、翻译和 TTS 增加统一重试、退避和断点恢复"),
-    ("P1", "增加说话人分离和多角色音色映射"),
-    ("P1", "为 Web/API 增加任务取消"),
-    ("P1", "为扫描版 PDF 增加 OCR，并支持复杂彩色版面的背景修复"),
-    ("P2", "增加可选口型同步"),
-    ("P2", "把本地 JSON/线程池替换为数据库和分布式任务队列"),
-    ("P2", "增加中间文件过期清理、指标和质量评估报告"),
+    ("P0", "使用已授权的 B站/YouTube 网络视频完成真实下载和 1 分钟端到端验收"),
+    ("P0", "接通 Ollama 或其他 OpenAI-compatible 服务，验证非 Codex CLI 翻译链路"),
+    ("P3", "多实例生产部署时，把本机 SQLite 队列/审计和本地文件目录替换为 Redis/Celery、外部数据库和对象存储"),
+    ("P3", "接入并验收具体 lip-sync 模型权重，例如 Wav2Lip/MuseTalk；当前已支持外部命令模板"),
 ]
 
 
@@ -190,6 +194,117 @@ class StepwiseVideoTranslationPipeline:
             return [Segment.model_validate(item) for item in payload]
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise PipelineError(f"片段文件无效：{exc}") from exc
+
+    def _selected_segments(
+        self,
+        segments: list[Segment],
+        segment_ids: list[int],
+    ) -> list[Segment]:
+        selected = {int(item) for item in segment_ids}
+        matches = [segment for segment in segments if segment.index in selected]
+        missing = sorted(selected - {segment.index for segment in matches})
+        if missing:
+            raise PipelineError(f"片段不存在：{missing}")
+        return matches
+
+    def _invalidate_after_segment_change(
+        self,
+        manifest: JobManifest,
+        *,
+        translated: bool,
+        synthesized: bool,
+    ) -> None:
+        if translated and not synthesized:
+            manifest.completed_steps = [
+                step
+                for step in manifest.completed_steps
+                if step not in {"synthesize", "align", "mux"}
+            ]
+            manifest.dub_audio_path = None
+            manifest.output_path = None
+        elif translated or synthesized:
+            manifest.completed_steps = [
+                step
+                for step in manifest.completed_steps
+                if step not in {"align", "mux"}
+            ]
+            manifest.dub_audio_path = None
+            manifest.output_path = None
+        self.store.save(manifest)
+
+    def _overlong_tts_segments(
+        self,
+        manifest: JobManifest,
+        segments: list[Segment],
+        media: MediaBinaries,
+    ) -> list[tuple[Segment, float, float]]:
+        overlong: list[tuple[Segment, float, float]] = []
+        for segment in segments:
+            if not segment.tts_file or segment.asr_unclear:
+                continue
+            tts_path = Path(segment.tts_file)
+            if not tts_path.is_file():
+                continue
+            tts_duration = probe_duration(tts_path, media)
+            allowed = segment.duration * self.settings.max_tempo_factor
+            if tts_duration > allowed * 1.02:
+                overlong.append((segment, tts_duration, allowed))
+        return overlong
+
+    def _shorten_overlong_tts(
+        self,
+        manifest: JobManifest,
+        segments: list[Segment],
+        media: MediaBinaries,
+        logger: logging.Logger,
+    ) -> None:
+        if not self.settings.auto_shorten_overlong_tts:
+            return
+        attempts = max(0, self.settings.tts_shorten_retries)
+        if attempts <= 0:
+            return
+        translator = self._make_translator(logger)
+        synthesizer = self._make_synthesizer(logger)
+        tts_dir = self.store.job_dir(manifest.id) / "tts"
+        for attempt in range(1, attempts + 1):
+            raise_if_canceled(manifest, self.store)
+            overlong = self._overlong_tts_segments(manifest, segments, media)
+            if not overlong:
+                return
+            targets = [item[0] for item in overlong]
+            reason = "；".join(
+                f"片段 {segment.index} 配音 {duration:.2f}s，"
+                f"允许约 {allowed:.2f}s"
+                for segment, duration, allowed in overlong[:12]
+            )
+            logger.info(
+                "发现 %s 个过长配音片段，尝试第 %s/%s 次缩短译文并重配音。",
+                len(targets),
+                attempt,
+                attempts,
+            )
+            translator.shorten_for_tts(
+                targets,
+                target_language=manifest.options.target_language,
+                glossary=manifest.options.glossary,
+                reason=reason,
+            )
+            for segment in targets:
+                segment.tts_file = None
+            synthesizer.synthesize_segments(
+                targets,
+                tts_dir,
+                cancel_check=lambda: raise_if_canceled(
+                    manifest,
+                    self.store,
+                ),
+            )
+            self._write_segments(manifest, segments)
+            manifest.metadata["auto_shorten_overlong_tts"] = {
+                "last_attempt": attempt,
+                "last_count": len(targets),
+            }
+            self.store.save(manifest)
 
     def _source_path(self, manifest: JobManifest) -> Path:
         if not manifest.source_path:
@@ -314,16 +429,23 @@ class StepwiseVideoTranslationPipeline:
         self._require_previous(manifest, selected)
 
         try:
-            self.store.set_stage(
-                manifest,
-                ACTIVE_STATUS[selected],
-                ACTIVE_PROGRESS[selected],
-                STEP_START_MESSAGES[selected],
-            )
-            method = getattr(self, f"_step_{selected.value}")
-            method(manifest, logger)
-            self._mark_completed(manifest, selected)
+            with record_step_metric(manifest, self.store, selected.value):
+                raise_if_canceled(manifest, self.store)
+                self.store.set_stage(
+                    manifest,
+                    ACTIVE_STATUS[selected],
+                    ACTIVE_PROGRESS[selected],
+                    STEP_START_MESSAGES[selected],
+                )
+                method = getattr(self, f"_step_{selected.value}")
+                method(manifest, logger)
+                raise_if_canceled(manifest, self.store)
+                self._mark_completed(manifest, selected)
             return manifest
+        except PipelineCanceled:
+            logger.info("步骤 %s 已取消", selected.value)
+            mark_canceled(manifest, self.store)
+            raise
         except Exception as exc:
             logger.exception("步骤 %s 失败", selected.value)
             self.store.fail(manifest, str(exc))
@@ -337,6 +459,7 @@ class StepwiseVideoTranslationPipeline:
 
     def run_all(self, manifest: JobManifest) -> JobManifest:
         while (step := self.next_step(manifest)) is not None:
+            raise_if_canceled(manifest, self.store)
             self.run_step(manifest, step)
         return manifest
 
@@ -398,6 +521,15 @@ class StepwiseVideoTranslationPipeline:
         if not segments:
             raise VideoTranslatorError("没有识别到可翻译的语音。")
         manifest.metadata.update(asr_metadata)
+        if self.settings.enable_diarization:
+            raise_if_canceled(manifest, self.store)
+            diarization_metadata = diarize_segments(
+                self._audio_path(manifest),
+                segments,
+                self.settings,
+                logger,
+            )
+            manifest.metadata.update(diarization_metadata)
         self._write_segments(manifest, segments)
 
     def _step_translate(
@@ -407,15 +539,29 @@ class StepwiseVideoTranslationPipeline:
     ) -> None:
         segments = self._load_segments(manifest)
         translator = self._make_translator(logger)
-        translator.translate(
-            segments,
-            target_language=manifest.options.target_language,
-            glossary=manifest.options.glossary,
-            on_batch_completed=lambda current: self._write_segments(
-                manifest,
-                current,
-            ),
-        )
+        try:
+            translator.translate(
+                segments,
+                target_language=manifest.options.target_language,
+                glossary=manifest.options.glossary,
+                on_batch_completed=lambda current: self._write_segments(
+                    manifest,
+                    current,
+                ),
+                cancel_check=lambda: raise_if_canceled(manifest, self.store),
+            )
+        except TypeError as exc:
+            if "cancel_check" not in str(exc):
+                raise
+            translator.translate(
+                segments,
+                target_language=manifest.options.target_language,
+                glossary=manifest.options.glossary,
+                on_batch_completed=lambda current: self._write_segments(
+                    manifest,
+                    current,
+                ),
+            )
         self._write_segments(manifest, segments)
         subtitles = write_srt(
             segments,
@@ -433,10 +579,19 @@ class StepwiseVideoTranslationPipeline:
         if any(not segment.translated_text for segment in segments):
             raise PipelineError("存在没有译文的片段，请先重新执行 translate。")
         synthesizer = self._make_synthesizer(logger)
-        synthesizer.synthesize_segments(
-            segments,
-            self.store.job_dir(manifest.id) / "tts",
-        )
+        try:
+            synthesizer.synthesize_segments(
+                segments,
+                self.store.job_dir(manifest.id) / "tts",
+                cancel_check=lambda: raise_if_canceled(manifest, self.store),
+            )
+        except TypeError as exc:
+            if "cancel_check" not in str(exc):
+                raise
+            synthesizer.synthesize_segments(
+                segments,
+                self.store.job_dir(manifest.id) / "tts",
+            )
         self._write_segments(manifest, segments)
 
     def _step_align(
@@ -446,6 +601,7 @@ class StepwiseVideoTranslationPipeline:
     ) -> None:
         media = resolve_media_binaries(self.settings)
         segments = self._load_segments(manifest)
+        self._shorten_overlong_tts(manifest, segments, media, logger)
         aligned_files = normalize_tts_segments(
             segments,
             self.store.job_dir(manifest.id) / "aligned",
@@ -541,6 +697,11 @@ class StepwiseVideoTranslationPipeline:
                 logger=logger,
             )
             manifest.output_path = str(output)
+            write_quality_report(
+                manifest,
+                job_dir=self.store.job_dir(manifest.id),
+                segments=self._load_segments(manifest),
+            )
             self.store.save(manifest)
             return
 
@@ -548,11 +709,18 @@ class StepwiseVideoTranslationPipeline:
             manifest.title or "video",
             manifest.id,
         )
+        muxed_output = output
+        if self.settings.enable_lip_sync:
+            muxed_output = self.settings.outputs_dir / safe_output_name(
+                manifest.title or "video",
+                manifest.id,
+                suffix=".pre-lipsync.mp4",
+            )
         mux_video(
             source,
             Path(manifest.dub_audio_path),
             Path(manifest.subtitle_path),
-            output,
+            muxed_output,
             settings=self.settings,
             media=media,
             keep_original_audio=keep_original,
@@ -562,5 +730,130 @@ class StepwiseVideoTranslationPipeline:
             duck_control_audio=duck_control_audio,
             logger=logger,
         )
+        if self.settings.enable_lip_sync:
+            lip_output = output
+            apply_lip_sync(
+                source_video=source,
+                muxed_video=muxed_output,
+                dub_audio=Path(manifest.dub_audio_path),
+                subtitles=Path(manifest.subtitle_path),
+                output=lip_output,
+                settings=self.settings,
+                media=media,
+                logger=logger,
+            )
+            manifest.metadata["lip_sync"] = {
+                "enabled": True,
+                "command_template": self.settings.lip_sync_command,
+                "pre_lip_sync_output": str(muxed_output),
+            }
         manifest.output_path = str(output)
+        write_quality_report(
+            manifest,
+            job_dir=self.store.job_dir(manifest.id),
+            segments=self._load_segments(manifest),
+        )
         self.store.save(manifest)
+
+    def rerun_segments(
+        self,
+        manifest: JobManifest,
+        *,
+        segment_ids: list[int],
+        mode: str,
+    ) -> JobManifest:
+        if mode not in {"translate", "synthesize", "both"}:
+            raise PipelineError("片段重跑模式无效。")
+        logger = create_job_logger(
+            manifest.id,
+            self.store.job_dir(manifest.id),
+        )
+        try:
+            with record_step_metric(
+                manifest,
+                self.store,
+                f"segments:{mode}",
+            ):
+                raise_if_canceled(manifest, self.store)
+                segments = self._load_segments(manifest)
+                selected = self._selected_segments(segments, segment_ids)
+                translated = mode in {"translate", "both"}
+                synthesized = mode in {"synthesize", "both"}
+                if translated:
+                    for segment in selected:
+                        if not segment.asr_unclear:
+                            segment.translated_text = None
+                        segment.tts_file = None
+                    translator = self._make_translator(logger)
+                    try:
+                        translator.translate(
+                            selected,
+                            target_language=manifest.options.target_language,
+                            glossary=manifest.options.glossary,
+                            cancel_check=lambda: raise_if_canceled(
+                                manifest,
+                                self.store,
+                            ),
+                        )
+                    except TypeError as exc:
+                        if "cancel_check" not in str(exc):
+                            raise
+                        translator.translate(
+                            selected,
+                            target_language=manifest.options.target_language,
+                            glossary=manifest.options.glossary,
+                        )
+                    subtitles = write_srt(
+                        segments,
+                        self.store.job_dir(manifest.id) / "zh-CN.srt",
+                    )
+                    manifest.subtitle_path = str(subtitles)
+                    if "translate" not in manifest.completed_steps:
+                        manifest.completed_steps.append("translate")
+                if synthesized:
+                    missing = [
+                        segment.index
+                        for segment in selected
+                        if not segment.translated_text
+                    ]
+                    if missing:
+                        raise PipelineError(
+                            f"片段缺少译文，不能重配音：{missing}"
+                        )
+                    synthesizer = self._make_synthesizer(logger)
+                    try:
+                        synthesizer.synthesize_segments(
+                            selected,
+                            self.store.job_dir(manifest.id) / "tts",
+                            cancel_check=lambda: raise_if_canceled(
+                                manifest,
+                                self.store,
+                            ),
+                        )
+                    except TypeError as exc:
+                        if "cancel_check" not in str(exc):
+                            raise
+                        synthesizer.synthesize_segments(
+                            selected,
+                            self.store.job_dir(manifest.id) / "tts",
+                        )
+                    if all(segment.tts_file for segment in segments):
+                        if "synthesize" not in manifest.completed_steps:
+                            manifest.completed_steps.append("synthesize")
+                self._write_segments(manifest, segments)
+                self._invalidate_after_segment_change(
+                    manifest,
+                    translated=translated,
+                    synthesized=synthesized,
+                )
+                manifest.error = None
+                self.store.save(manifest)
+                return manifest
+        except PipelineCanceled:
+            logger.info("片段重跑已取消")
+            mark_canceled(manifest, self.store)
+            raise
+        except Exception as exc:
+            logger.exception("片段重跑失败")
+            self.store.fail(manifest, str(exc))
+            raise

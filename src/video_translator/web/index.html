@@ -309,6 +309,11 @@
     }
     .primary, .step-run { background: var(--green); color: white; }
     .primary:hover, .step-run:hover { background: #0f3e2e; }
+    .danger {
+      border: 1px solid #d7aaa5;
+      background: #fff7f6;
+      color: var(--red);
+    }
     .secondary {
       border: 1px solid var(--line);
       background: #fff;
@@ -575,7 +580,7 @@
     }
     .segment {
       display: grid;
-      grid-template-columns: 74px 1fr;
+      grid-template-columns: 24px 74px 1fr;
       gap: 10px;
       padding: 10px 0;
       border-bottom: 1px solid #ece9e1;
@@ -583,6 +588,7 @@
       line-height: 1.55;
     }
     .segment time { color: var(--orange); font-family: ui-monospace, monospace; }
+    .segment input { margin-top: 3px; accent-color: var(--green); }
     .placeholder { padding: 25px 5px; color: var(--muted); text-align: center; font-size: 12px; }
     .book-list { display: grid; gap: 10px; margin-top: 20px; }
     .book-card {
@@ -979,6 +985,14 @@
                 <p class="help">用于扫描版 PDF。OCR 会先生成带文字层的 PDF，再复用当前翻译流程；专业 PDFMathTranslate/BabelDOC 模式暂不走这里。</p>
               </div>
               <div class="field">
+                <label for="book-ocr-backend">OCR / 结构化抽取后端</label>
+                <select id="book-ocr-backend">
+                  <option value="ocrmypdf" selected>OCRmyPDF / Tesseract（稳定）</option>
+                  <option value="docling">Docling 结构化抽取（需额外安装）</option>
+                </select>
+                <p class="help">复杂扫描论文可试 Docling：优先恢复阅读顺序、表格和结构；未安装时会给安装提示。</p>
+              </div>
+              <div class="field">
                 <label for="book-ocr-languages">OCR 语言</label>
                 <input id="book-ocr-languages" value="eng"
                   placeholder="eng 或 chi_sim+eng">
@@ -1036,6 +1050,43 @@
               <span class="legal">专业 PDF 模式会调用 PDFMathTranslate/BabelDOC，首次运行会自动准备模型和字体；EPUB 会保留图片、CSS 和目录链接。</span>
             </div>
           </form>
+          <div class="grid" id="book-library-controls">
+            <div class="field">
+              <label for="book-filter-tag">阅读库标签过滤</label>
+              <input id="book-filter-tag" placeholder="例如 transformer">
+            </div>
+            <div class="field">
+              <label for="book-filter-status">阅读状态</label>
+              <select id="book-filter-status">
+                <option value="">全部</option>
+                <option value="unread">未读</option>
+                <option value="reading">阅读中</option>
+                <option value="translated">已翻译</option>
+                <option value="reviewing">校对中</option>
+                <option value="done">已完成</option>
+                <option value="archived">已归档</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="book-filter-favorite">收藏</label>
+              <select id="book-filter-favorite">
+                <option value="">全部</option>
+                <option value="true">只看收藏</option>
+                <option value="false">只看未收藏</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="book-sort-by">排序</label>
+              <select id="book-sort-by">
+                <option value="updated_at" selected>最近更新</option>
+                <option value="quality_score">质量评分</option>
+                <option value="priority">阅读优先级</option>
+                <option value="created_at">创建时间</option>
+                <option value="title">标题</option>
+              </select>
+              <p class="help">质量评分/优先级可通过 API 或后续任务详情更新，用来做论文阅读队列。</p>
+            </div>
+          </div>
           <div class="book-list" id="book-list"></div>
           <div class="book-detail" id="book-detail" hidden></div>
         </section>
@@ -1057,6 +1108,15 @@
                   <option value="narration">单人讲解稿</option>
                 </select>
                 <p class="help">双人模式更像 NotebookLM 播客；单人模式更像老师讲论文。</p>
+              </div>
+              <div class="field">
+                <label for="paper-podcast-script-backend">脚本编排策略</label>
+                <select id="paper-podcast-script-backend">
+                  <option value="builtin" selected>内置严谨讲解</option>
+                  <option value="notebooklm">NotebookLM 风格双主持</option>
+                  <option value="podcastfy">音频博客 / Podcastfy 风格</option>
+                </select>
+                <p class="help">三种都会忠于论文；区别是开场、追问、转场和结尾的节目编排方式。</p>
               </div>
               <div class="field">
                 <label for="paper-podcast-duration">目标时长（分钟）</label>
@@ -1095,6 +1155,12 @@
                 <label for="paper-podcast-model">模型名</label>
                 <input id="paper-podcast-model" value="qwen3:8b"
                   placeholder="Codex 使用策略模型时可留空">
+              </div>
+              <div class="field">
+                <label for="paper-podcast-compare-models">脚本候选模型（可选）</label>
+                <input id="paper-podcast-compare-models"
+                  placeholder="例如 qwen3:8b,qwen3:14b；留空只跑当前模型">
+                <p class="help">填写后会逐个生成候选脚本、保存评分报告，并自动选择评分最高的脚本继续配音。</p>
               </div>
               <div class="field">
                 <label for="paper-podcast-api-key">API Key</label>
@@ -1150,6 +1216,13 @@
                   <p class="help">关闭后可先检查抽取文本，再生成脚本，最后合成 MP3。</p>
                 </div>
               </div>
+              <div class="check-field">
+                <input id="paper-podcast-video" type="checkbox">
+                <div>
+                  <label for="paper-podcast-video">同时生成讲解视频 MP4</label>
+                  <p class="help">渲染封面和图表页做幻灯片，并与讲解 MP3 合成视频。</p>
+                </div>
+              </div>
             </div>
             <div class="actions">
               <button class="primary" id="paper-podcast-submit" type="submit">导入并生成播客</button>
@@ -1182,6 +1255,7 @@
             <div class="job-policy" id="job-policy"></div>
             <div class="step-progress-list" id="job-step-progress"></div>
             <div class="job-paths" id="job-paths"></div>
+            <div class="actions" id="job-actions"></div>
           </div>
 
           <div class="steps" id="steps"></div>
@@ -1197,7 +1271,11 @@
             <section class="inspect-card">
               <div class="inspect-head">
                 <h4 id="transcript-title">识别片段预览</h4>
-                <button class="text-button" id="refresh-transcript">刷新</button>
+                <div>
+                  <button class="text-button" id="rerun-segment-translate">重译选中</button>
+                  <button class="text-button" id="rerun-segment-synthesize">重配音选中</button>
+                  <button class="text-button" id="refresh-transcript">刷新</button>
+                </div>
               </div>
               <div class="transcript" id="transcript">
                 <div class="placeholder">完成语音识别后，这里会显示带时间戳的文本。</div>
@@ -1252,7 +1330,10 @@
           {key: "source_language", scope: "options", label: "原始语言", type: "text", value: "", placeholder: "en / zh / ja；留空自动检测", help: "填写正确语言能减少误判；它不是翻译目标语言。"},
           {key: "asr_device", scope: "settings", label: "faster-whisper 计算设备", type: "select", value: "cpu", options: [["auto","auto"],["cpu","CPU"],["cuda","NVIDIA CUDA"]], help: "仅 faster-whisper 使用；选择 MLX 时自动禁用。"},
           {key: "asr_compute_type", scope: "settings", label: "faster-whisper 计算精度", type: "select", value: "int8", options: [["auto","auto"],["int8","int8（CPU 推荐）"],["int8_float32","int8_float32"],["int8_float16","int8_float16（CUDA）"],["float16","float16（CUDA）"],["float32","float32"]], help: "仅 faster-whisper 使用；CPU 推荐 int8，NVIDIA GPU 推荐 float16。"},
-          {key: "asr_unclear_threshold", scope: "settings", label: "不清晰置信度阈值", type: "number", value: "0.45", min: "0", max: "1", step: "0.05", help: "低于阈值的片段标记为【原音不清，未能可靠识别】，并跳过翻译，避免模型编造。"}
+          {key: "asr_unclear_threshold", scope: "settings", label: "不清晰置信度阈值", type: "number", value: "0.45", min: "0", max: "1", step: "0.05", help: "低于阈值的片段标记为【原音不清，未能可靠识别】，并跳过翻译，避免模型编造。"},
+          {key: "enable_diarization", scope: "settings", label: "说话人分离", type: "checkbox", value: false, help: "可选 pyannote。需要安装 diarization 依赖并配置 Hugging Face Token。"},
+          {key: "diarization_model", scope: "settings", label: "说话人分离模型", type: "text", value: "pyannote/speaker-diarization-3.1", help: "默认使用 pyannote 官方模型；首次需要同意模型条款。"},
+          {key: "diarization_auth_token", scope: "settings", label: "Diarization Token", type: "password", value: "", placeholder: "hf_...", help: "只随本次请求传入，不写入任务文件。"}
         ]
       },
       {
@@ -1288,6 +1369,10 @@
           {key: "tts_voice", scope: "settings", label: "音色", type: "text", value: "zh-CN-XiaoxiaoNeural", help: "Edge 推荐晓晓；CosyVoice 填服务端 spk_id。"},
           {key: "tts_rate", scope: "settings", label: "语速", type: "text", value: "+0%", help: "例如 +10% 或 -10%；时间轴步骤还会二次对齐。"},
           {key: "tts_volume", scope: "settings", label: "音量", type: "text", value: "+0%", help: "例如 +0%、+10%、-10%。"},
+          {key: "tts_timeout_seconds", scope: "settings", label: "单句 TTS 超时（秒）", type: "number", value: "180", min: "1", max: "3600", step: "10", help: "Edge 或自建 TTS 偶发卡住时会按这个时间中断。"},
+          {key: "tts_retries", scope: "settings", label: "TTS 重试次数", type: "number", value: "2", min: "0", max: "10", step: "1", help: "网络或服务短暂失败会自动重试。"},
+          {key: "tts_retry_backoff_seconds", scope: "settings", label: "TTS 重试初始等待（秒）", type: "number", value: "2", min: "0", max: "300", step: "1", help: "指数退避，例如 2、4、8 秒。"},
+          {key: "speaker_voice_map", scope: "settings", label: "说话人音色映射", type: "textarea", value: "", placeholder: "{\"SPEAKER_00\":\"zh-CN-XiaoxiaoNeural\",\"SPEAKER_01\":\"zh-CN-YunxiNeural\"}", help: "启用说话人分离后，可按 speaker 标签选择不同音色。也支持 SPEAKER_00=voiceA,SPEAKER_01=voiceB。", wide: true},
           {key: "tts_http_url", scope: "settings", label: "通用 HTTP 地址", type: "text", value: "", placeholder: "仅 provider=http 时填写", help: "服务应接收 JSON 并返回音频。"},
           {key: "cosyvoice_base_url", scope: "settings", label: "CosyVoice 地址", type: "text", value: "http://127.0.0.1:50000", help: "仅 provider=cosyvoice 时使用。"},
           {key: "cosyvoice_mode", scope: "settings", label: "CosyVoice 模式", type: "select", value: "sft", options: [["sft","sft"],["zero_shot","zero_shot"],["cross_lingual","cross_lingual"],["instruct","instruct"],["instruct2","instruct2"]], help: "首次建议 sft；其他模式还需在 .env 配置参考音频或指令。"}
@@ -1314,7 +1399,9 @@
           {key: "keep_original_audio", scope: "options", label: "保留原声音轨", type: "checkbox", value: true, help: "输出第二音轨，方便播放器切换。"},
           {key: "duck_original_audio", scope: "options", label: "整段压低原声", type: "checkbox", value: true, help: "按识别片段的完整起止时间压低，不再只跟随中文实际波形。"},
           {key: "burn_subtitles", scope: "options", label: "烧录字幕", type: "checkbox", value: false, help: "默认软字幕可关闭；烧录兼容更广但需要重编码画面。"},
-          {key: "enable_demucs", scope: "settings", label: "启用 Demucs 人声/BGM 分离", type: "checkbox", value: false, help: "实验性高耗时选项，需另装 demucs。"}
+          {key: "enable_demucs", scope: "settings", label: "启用 Demucs 人声/BGM 分离", type: "checkbox", value: false, help: "实验性高耗时选项，需另装 demucs。"},
+          {key: "enable_lip_sync", scope: "settings", label: "启用 lip-sync", type: "checkbox", value: false, help: "默认关闭；需要外部 Wav2Lip/MuseTalk 等命令。"},
+          {key: "lip_sync_command", scope: "settings", label: "Lip-sync 命令模板", type: "textarea", value: "", placeholder: "python /path/Wav2Lip/inference.py --face {video} --audio {audio} --outfile {output}", help: "可用变量：{video} 原视频、{muxed} 已封装视频、{audio} 中文配音、{subtitles} 字幕、{output} 输出。", wide: true}
         ]
       }
     ];
@@ -1326,6 +1413,12 @@
       selected: null,
       selectedKind: null,
       historyFilter: "all",
+      bookLibrary: {
+        tag: "",
+        readingStatus: "",
+        favorite: "",
+        sortBy: "updated_at",
+      },
       timer: null,
       pollDelay: null,
       runStates: new Map(),
@@ -2183,6 +2276,7 @@
       addJobPathLine(box, "片段数据", paths.segments);
       addJobPathLine(box, "字幕文件", paths.subtitle);
       addJobPathLine(box, "配音音频", paths.dub_audio);
+      addJobPathLine(box, "质量报告", paths.quality_report);
       addJobPathLine(
         box,
         "最终输出",
@@ -2190,6 +2284,23 @@
         job.download_ready ? `/api/jobs/${job.id}/download` : null
       );
       box.hidden = !box.children.length;
+    }
+
+    function renderJobActions(job) {
+      const box = $("#job-actions");
+      box.replaceChildren();
+      if (job.running || job.cancel_requested) {
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "secondary danger";
+        cancel.textContent = job.cancel_requested ? "正在取消…" : "取消当前任务";
+        cancel.disabled = Boolean(job.cancel_requested);
+        cancel.addEventListener("click", () => cancelSelectedTask());
+        const hint = document.createElement("span");
+        hint.className = "legal";
+        hint.textContent = "取消会在当前安全点停止；下载/ASR/外部排版命令可能需要等当前子进程返回。";
+        box.append(cancel, hint);
+      }
     }
 
     function updateJob(job) {
@@ -2217,6 +2328,7 @@
       renderJobPolicy(job);
       renderJobStepProgress(job);
       renderJobPaths(job);
+      renderJobActions(job);
       renderSteps(job);
       renderJobs();
     }
@@ -2367,6 +2479,7 @@
         target_language: $("#book-target").value.trim() || "简体中文",
         output_mode: $("#book-mode").value,
         ocr_mode: $("#book-ocr-mode").value,
+        ocr_backend: $("#book-ocr-backend").value,
         ocr_languages: $("#book-ocr-languages").value.trim() || "eng",
         glossary,
         settings,
@@ -2452,11 +2565,18 @@
         target_language:
           $("#paper-podcast-target").value.trim() || "简体中文",
         style: $("#paper-podcast-style").value,
+        script_backend: $("#paper-podcast-script-backend").value,
+        script_compare_models: $("#paper-podcast-compare-models").value
+          .split(/[,，\n]/)
+          .map(item => item.trim())
+          .filter(Boolean)
+          .slice(0, 5),
         duration_minutes: Number($("#paper-podcast-duration").value) || 8,
         glossary,
         voice_a: $("#paper-podcast-voice-a").value.trim(),
         voice_b: $("#paper-podcast-voice-b").value.trim(),
         silence_ms: Number($("#paper-podcast-silence").value) || 220,
+        make_video: $("#paper-podcast-video").checked,
         settings,
       };
       const model = $("#paper-podcast-model").value.trim();
@@ -2542,12 +2662,31 @@
           () => runPaperPodcast(podcast.id, "run")
         );
         actions.append(all);
+        if (podcast.running || podcast.cancel_requested) {
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.className = "secondary danger";
+          cancel.textContent = podcast.cancel_requested ? "正在取消…" : "取消";
+          cancel.disabled = Boolean(podcast.cancel_requested);
+          cancel.addEventListener(
+            "click",
+            () => cancelTask("paper_podcast", podcast.id)
+          );
+          actions.append(cancel);
+        }
         if (podcast.download_ready) {
           const download = document.createElement("a");
           download.className = "secondary";
           download.href = `/api/paper-podcasts/${podcast.id}/download`;
           download.textContent = "下载 MP3";
           actions.append(download);
+        }
+        if (podcast.video_download_url) {
+          const video = document.createElement("a");
+          video.className = "secondary";
+          video.href = podcast.video_download_url;
+          video.textContent = "下载视频";
+          actions.append(video);
         }
         card.append(title, meta);
         if (podcast.error) card.append(error);
@@ -2574,9 +2713,13 @@
         `风格：${podcast.style === "deep_dive" ? "双人深度讲解" : "单人讲解稿"}`,
         `目标时长：${podcast.duration_minutes || 8} 分钟`,
         `下一步：${podcast.next_step || "无"}`,
+        script.backend ? `脚本策略：${script.backend}` : "脚本策略：默认",
+        script.selected_model ? `入选模型：${script.selected_model}` : null,
+        script.comparison_count ? `候选模型：${script.comparison_count} 个` : null,
+        script.quality_score ? `质量评分：${script.quality_score}` : "质量评分：待生成",
         script.lines ? `台词：${script.lines} 条` : "台词：未生成",
         synthesize.clips ? `音频片段：${synthesize.clips}` : "音频片段：未生成",
-      ].join(" · ");
+      ].filter(Boolean).join(" · ");
       const policy = document.createElement("p");
       policy.textContent = podcast.running
         ? "论文播客任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
@@ -2620,11 +2763,33 @@
       );
       addJobPathLine(
         box,
+        "脚本质量报告",
+        paths.script_quality,
+        paths.script_quality
+          ? `/api/paper-podcasts/${podcast.id}/download?artifact=quality`
+          : null
+      );
+      addJobPathLine(
+        box,
+        "脚本模型对比报告",
+        paths.script_comparison,
+        paths.script_comparison
+          ? `/api/paper-podcasts/${podcast.id}/download?artifact=comparison`
+          : null
+      );
+      addJobPathLine(
+        box,
         "最终 MP3",
         paths.audio || podcast.audio_path,
         podcast.download_ready
           ? `/api/paper-podcasts/${podcast.id}/download`
           : null
+      );
+      addJobPathLine(
+        box,
+        "讲解视频 MP4",
+        paths.video || podcast.video_path,
+        podcast.video_download_url || null
       );
     }
 
@@ -2766,8 +2931,25 @@
         const title = document.createElement("strong");
         title.textContent = book.title;
         const meta = document.createElement("p");
+        const library = book.library || {};
+        const libraryParts = [
+          library.reading_status ? `状态 ${library.reading_status}` : null,
+          library.favorite ? "★ 收藏" : null,
+          Number.isFinite(Number(library.quality_score))
+            ? `质量 ${library.quality_score}`
+            : null,
+          Number.isFinite(Number(library.priority))
+            ? `优先级 ${library.priority}`
+            : null,
+          Array.isArray(library.tags) && library.tags.length
+            ? `标签 ${library.tags.join(", ")}`
+            : null,
+        ].filter(Boolean);
         meta.textContent =
-          `${book.format.toUpperCase()} · ${bookStatus(book)} · ${bookModeLabel(book.output_mode)} · ${book.id.slice(0, 8)}`;
+          [
+            `${book.format.toUpperCase()} · ${bookStatus(book)} · ${bookModeLabel(book.output_mode)} · ${book.id.slice(0, 8)}`,
+            ...libraryParts,
+          ].join(" · ");
         const error = document.createElement("p");
         error.style.color = "var(--red)";
         error.textContent = book.error || "";
@@ -2800,6 +2982,15 @@
         all.disabled = book.running;
         all.addEventListener("click", () => runBook(book.id, "run"));
         actions.append(all);
+        if (book.running || book.cancel_requested) {
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.className = "secondary danger";
+          cancel.textContent = book.cancel_requested ? "正在取消…" : "取消";
+          cancel.disabled = Boolean(book.cancel_requested);
+          cancel.addEventListener("click", () => cancelTask("book", book.id));
+          actions.append(cancel);
+        }
         if (book.download_ready) {
           const download = document.createElement("a");
           download.className = "secondary";
@@ -2848,6 +3039,133 @@
       policy.textContent = book.running
         ? "书籍任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
         : "点“继续完成全部”会从缺失步骤继续：已抽取文本会复用；翻译会按目标语言、模型、策略和术语表的缓存键跳过未变化块；排版会重新生成输出文件。";
+      const library = book.library || {};
+      const libraryEditor = document.createElement("div");
+      libraryEditor.className = "grid";
+      const tagsField = document.createElement("div");
+      tagsField.className = "field";
+      const tagsLabel = document.createElement("label");
+      tagsLabel.textContent = "标签";
+      const tagsInput = document.createElement("input");
+      tagsInput.value = Array.isArray(library.tags)
+        ? library.tags.join(", ")
+        : "";
+      tagsInput.placeholder = "transformer, must-read";
+      tagsField.append(tagsLabel, tagsInput);
+      const statusField = document.createElement("div");
+      statusField.className = "field";
+      const statusLabel = document.createElement("label");
+      statusLabel.textContent = "阅读状态";
+      const statusSelect = document.createElement("select");
+      for (const [value, label] of [
+        ["unread", "未读"],
+        ["reading", "阅读中"],
+        ["translated", "已翻译"],
+        ["reviewing", "校对中"],
+        ["done", "已完成"],
+        ["archived", "已归档"],
+      ]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        statusSelect.append(option);
+      }
+      statusSelect.value = library.reading_status || "unread";
+      statusField.append(statusLabel, statusSelect);
+      const priorityField = document.createElement("div");
+      priorityField.className = "field";
+      const priorityLabel = document.createElement("label");
+      priorityLabel.textContent = "阅读优先级（0-100）";
+      const priorityInput = document.createElement("input");
+      priorityInput.type = "number";
+      priorityInput.min = "0";
+      priorityInput.max = "100";
+      priorityInput.value = library.priority ?? "";
+      priorityField.append(priorityLabel, priorityInput);
+      const favoriteField = document.createElement("div");
+      favoriteField.className = "check-field";
+      const favoriteInput = document.createElement("input");
+      favoriteInput.type = "checkbox";
+      favoriteInput.checked = Boolean(library.favorite);
+      const favoriteText = document.createElement("div");
+      const favoriteLabel = document.createElement("label");
+      favoriteLabel.textContent = "收藏到重点论文";
+      const favoriteHelp = document.createElement("p");
+      favoriteHelp.className = "help";
+      favoriteHelp.textContent = "用于左侧筛选和阅读队列排序。";
+      favoriteText.append(favoriteLabel, favoriteHelp);
+      favoriteField.append(favoriteInput, favoriteText);
+      const qualityField = document.createElement("div");
+      qualityField.className = "field";
+      const qualityLabel = document.createElement("label");
+      qualityLabel.textContent = "质量评分（0-100）";
+      const qualityInput = document.createElement("input");
+      qualityInput.type = "number";
+      qualityInput.min = "0";
+      qualityInput.max = "100";
+      qualityInput.step = "0.1";
+      qualityInput.value = library.quality_score ?? "";
+      qualityField.append(qualityLabel, qualityInput);
+      const summaryField = document.createElement("div");
+      summaryField.className = "field wide";
+      const summaryLabel = document.createElement("label");
+      summaryLabel.textContent = "阅读摘要";
+      const summaryInput = document.createElement("textarea");
+      summaryInput.value = library.summary || "";
+      summaryInput.placeholder = "这篇论文为什么值得读、当前读到哪里、下一步要检查什么。";
+      summaryField.append(summaryLabel, summaryInput);
+      const libraryActions = document.createElement("div");
+      libraryActions.className = "actions";
+      const saveLibrary = document.createElement("button");
+      saveLibrary.type = "button";
+      saveLibrary.className = "secondary";
+      saveLibrary.textContent = "保存阅读库信息";
+      saveLibrary.addEventListener("click", async () => {
+        saveLibrary.disabled = true;
+        try {
+          const payload = {
+            tags: tagsInput.value
+              .split(",")
+              .map(item => item.trim())
+              .filter(Boolean),
+            favorite: favoriteInput.checked,
+            reading_status: statusSelect.value,
+            summary: summaryInput.value.trim(),
+          };
+          if (priorityInput.value !== "") {
+            payload.priority = Number(priorityInput.value);
+          }
+          if (qualityInput.value !== "") {
+            payload.quality_score = Number(qualityInput.value);
+          }
+          const updated = await api(`/api/books/${book.id}/library`, {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload),
+          });
+          state.selected = updated;
+          await refreshBooks();
+          renderBookDetail(updated);
+          notify("阅读库信息已保存。");
+        } catch (error) {
+          notify(error.message, true);
+        } finally {
+          saveLibrary.disabled = false;
+        }
+      });
+      const libraryHint = document.createElement("span");
+      libraryHint.className = "legal";
+      libraryHint.textContent = "用于批量论文排序、筛选和阅读队列；不会重新翻译。";
+      libraryActions.append(saveLibrary, libraryHint);
+      libraryEditor.append(
+        tagsField,
+        statusField,
+        priorityField,
+        qualityField,
+        favoriteField,
+        summaryField,
+        libraryActions
+      );
       const rerender = document.createElement("div");
       rerender.className = "actions";
       const modeSelect = document.createElement("select");
@@ -2880,7 +3198,7 @@
       rerenderHint.className = "legal";
       rerenderHint.textContent = "只重建 PDF/EPUB，不重新翻译；已生成版本会保留在下面。";
       rerender.append(modeSelect, rerenderButton, rerenderHint);
-      box.append(title, summary, policy, rerender);
+      box.append(title, summary, policy, libraryEditor, rerender);
       const paths = book.artifact_paths || {};
       addJobPathLine(box, "任务目录", book.directory_path);
       addJobPathLine(box, "任务清单", book.manifest_path);
@@ -2916,7 +3234,22 @@
 
     async function refreshBooks() {
       try {
-        state.books = await api("/api/books");
+        const params = new URLSearchParams();
+        if (state.bookLibrary.tag) {
+          params.set("tag", state.bookLibrary.tag);
+        }
+        if (state.bookLibrary.readingStatus) {
+          params.set("reading_status", state.bookLibrary.readingStatus);
+        }
+        if (state.bookLibrary.favorite) {
+          params.set("favorite", state.bookLibrary.favorite);
+        }
+        if (state.bookLibrary.sortBy) {
+          params.set("sort_by", state.bookLibrary.sortBy);
+        }
+        params.set("descending", state.bookLibrary.sortBy === "title" ? "false" : "true");
+        const query = params.toString();
+        state.books = await api(`/api/books${query ? `?${query}` : ""}`);
         if (state.selectedKind === "book" && state.selected) {
           const latest = state.books.find(
             book => book.id === state.selected.id
@@ -2988,6 +3321,64 @@
       }
     }
 
+    async function cancelTask(kind, id) {
+      const endpoint = kind === "book"
+        ? `/api/books/${id}/cancel`
+        : kind === "paper_podcast"
+          ? `/api/paper-podcasts/${id}/cancel`
+          : `/api/jobs/${id}/cancel`;
+      try {
+        await api(endpoint, {method: "POST"});
+        notify("已请求取消；后台会在当前安全点停止。");
+        if (kind === "book") await refreshBooks();
+        else if (kind === "paper_podcast") await refreshPaperPodcasts();
+        else await selectJob(id);
+        startPolling(true);
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
+    async function cancelSelectedTask() {
+      if (!state.selected) return;
+      await cancelTask(state.selectedKind || "video", state.selected.id);
+    }
+
+    function selectedSegmentIds() {
+      return [...document.querySelectorAll(".segment-select:checked")]
+        .map(input => Number(input.value))
+        .filter(Number.isFinite);
+    }
+
+    async function rerunSelectedSegments(mode) {
+      if (!state.selected || state.selectedKind === "book") return;
+      const ids = selectedSegmentIds();
+      if (!ids.length) {
+        notify("请先在片段预览里勾选至少一个片段。", true);
+        return;
+      }
+      try {
+        const job = await api(
+          `/api/jobs/${state.selected.id}/segments/rerun`,
+          {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              segment_ids: ids,
+              mode,
+              options: {},
+              settings: {},
+            }),
+          }
+        );
+        updateJob(job);
+        notify(mode === "translate" ? "已提交选中片段重译。" : "已提交选中片段重配音。");
+        startPolling(true);
+      } catch (error) {
+        notify(error.message, true);
+      }
+    }
+
     async function loadLog() {
       if (!state.selected) return;
       try {
@@ -3025,11 +3416,16 @@
         data.items.forEach(item => {
           const row = document.createElement("div");
           row.className = "segment";
+          const select = document.createElement("input");
+          select.type = "checkbox";
+          select.className = "segment-select";
+          select.value = item.index;
+          select.disabled = Boolean(state.selected?.running);
           const time = document.createElement("time");
           time.textContent = `${seconds(item.start)} → ${seconds(item.end)}`;
           const text = document.createElement("div");
-          text.textContent = item.translated_text || item.source_text;
-          row.append(time, text);
+          text.textContent = `#${item.index}  ${item.translated_text || item.source_text}`;
+          row.append(select, time, text);
           box.append(row);
         });
       } catch (error) {
@@ -3222,8 +3618,32 @@
       state.historyFilter = button.dataset.filter;
       renderJobs();
     });
+    $("#book-filter-tag").addEventListener("change", event => {
+      state.bookLibrary.tag = event.target.value.trim();
+      refreshBooks();
+    });
+    $("#book-filter-status").addEventListener("change", event => {
+      state.bookLibrary.readingStatus = event.target.value;
+      refreshBooks();
+    });
+    $("#book-filter-favorite").addEventListener("change", event => {
+      state.bookLibrary.favorite = event.target.value;
+      refreshBooks();
+    });
+    $("#book-sort-by").addEventListener("change", event => {
+      state.bookLibrary.sortBy = event.target.value;
+      refreshBooks();
+    });
     $("#refresh-log").addEventListener("click", loadLog);
     $("#refresh-transcript").addEventListener("click", loadTranscript);
+    $("#rerun-segment-translate").addEventListener(
+      "click",
+      () => rerunSelectedSegments("translate")
+    );
+    $("#rerun-segment-synthesize").addEventListener(
+      "click",
+      () => rerunSelectedSegments("synthesize")
+    );
     $("#create-mode").addEventListener("change", syncCreateMode);
     $("#template-translator-provider").addEventListener(
       "change",

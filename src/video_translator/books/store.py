@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -80,18 +81,108 @@ class BookStore:
             path.read_text(encoding="utf-8")
         )
 
-    def list(self) -> list[BookManifest]:
+    def list(
+        self,
+        *,
+        tag: str | None = None,
+        favorite: bool | None = None,
+        reading_status: str | None = None,
+        sort_by: str = "updated_at",
+        descending: bool = True,
+    ) -> list[BookManifest]:
         paths = sorted(
             self.jobs_dir.glob("*/book-manifest.json"),
             key=lambda item: item.stat().st_mtime,
             reverse=True,
         )
-        return [
+        manifests = [
             BookManifest.model_validate_json(
                 path.read_text(encoding="utf-8")
             )
             for path in paths
         ]
+        if tag:
+            wanted = tag.strip().lower()
+            manifests = [
+                manifest
+                for manifest in manifests
+                if wanted
+                in {
+                    str(item).strip().lower()
+                    for item in manifest.metadata.get("library", {}).get(
+                        "tags",
+                        [],
+                    )
+                }
+            ]
+        if favorite is not None:
+            manifests = [
+                manifest
+                for manifest in manifests
+                if bool(
+                    manifest.metadata.get("library", {}).get("favorite")
+                )
+                is favorite
+            ]
+        if reading_status:
+            wanted_status = reading_status.strip().lower()
+            manifests = [
+                manifest
+                for manifest in manifests
+                if str(
+                    manifest.metadata.get("library", {}).get(
+                        "reading_status",
+                        "",
+                    )
+                ).lower()
+                == wanted_status
+            ]
+
+        def sort_key(manifest: BookManifest):
+            library = manifest.metadata.get("library", {})
+            if sort_by == "title":
+                return manifest.title.lower()
+            if sort_by == "created_at":
+                return manifest.created_at
+            if sort_by == "priority":
+                return int(library.get("priority", 0) or 0)
+            if sort_by == "quality_score":
+                return float(library.get("quality_score", 0) or 0)
+            if sort_by == "reading_status":
+                return str(library.get("reading_status", "unread"))
+            return manifest.updated_at
+
+        return sorted(manifests, key=sort_key, reverse=descending)
+
+    def delete(
+        self,
+        book_id: str,
+        *,
+        delete_outputs: bool = True,
+    ) -> list[Path]:
+        manifest = self.get(book_id)
+        removed: list[Path] = []
+        if delete_outputs:
+            candidates = [manifest.output_path]
+            raw_outputs = manifest.metadata.get("rendered_outputs", {})
+            if isinstance(raw_outputs, dict):
+                candidates.extend(str(value) for value in raw_outputs.values())
+            for value in candidates:
+                if not value:
+                    continue
+                path = Path(value).resolve()
+                try:
+                    path.relative_to(self.outputs_dir.resolve())
+                except ValueError:
+                    continue
+                if path.exists():
+                    path.unlink()
+                    removed.append(path)
+        job_dir = self.job_dir(book_id)
+        if job_dir.exists():
+            shutil.rmtree(job_dir)
+            removed.append(job_dir)
+        return removed
 
     def write_blocks(
         self,
@@ -126,3 +217,42 @@ class BookStore:
         manifest.status = BookStatus.failed
         manifest.error = str(exc)
         self.save(manifest)
+
+    def update_library(
+        self,
+        manifest: BookManifest,
+        *,
+        tags: list[str] | None = None,
+        favorite: bool | None = None,
+        summary: str | None = None,
+        glossary: dict[str, str] | None = None,
+        reading_status: str | None = None,
+        priority: int | None = None,
+        quality_score: float | None = None,
+    ) -> BookManifest:
+        library = manifest.metadata.setdefault("library", {})
+        if tags is not None:
+            library["tags"] = sorted(
+                {
+                    item.strip()
+                    for item in tags
+                    if isinstance(item, str) and item.strip()
+                }
+            )
+        if favorite is not None:
+            library["favorite"] = bool(favorite)
+        if summary is not None:
+            library["summary"] = summary.strip()
+        if glossary is not None:
+            library["glossary"] = {
+                str(key): str(value)
+                for key, value in glossary.items()
+                if str(key).strip()
+            }
+        if reading_status is not None:
+            library["reading_status"] = reading_status
+        if priority is not None:
+            library["priority"] = int(priority)
+        if quality_score is not None:
+            library["quality_score"] = round(float(quality_score), 2)
+        return self.save(manifest)

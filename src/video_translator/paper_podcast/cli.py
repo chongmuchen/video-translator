@@ -22,6 +22,16 @@ def _glossary(path: str | None) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items()}
 
 
+def _compare_models(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [
+        item.strip()
+        for item in value.replace("\n", ",").split(",")
+        if item.strip()
+    ][:5]
+
+
 def _runtime(args) -> tuple[PaperPodcastPipeline, PaperPodcastStore]:
     settings = get_settings()
     updates = {}
@@ -63,6 +73,8 @@ def _print(manifest) -> None:
         print(f"讲解脚本：{manifest.script_markdown_path}")
     if manifest.audio_path:
         print(f"音频输出：{manifest.audio_path}")
+    if manifest.video_path:
+        print(f"视频输出：{manifest.video_path}")
     if manifest.error:
         print(f"错误：{manifest.error}")
 
@@ -75,6 +87,17 @@ def _add_generation_options(parser: argparse.ArgumentParser) -> None:
         default="deep_dive",
     )
     parser.add_argument("--duration-minutes", type=int, default=8)
+    parser.add_argument(
+        "--script-backend",
+        choices=["builtin", "notebooklm", "podcastfy"],
+        default="builtin",
+    )
+    parser.add_argument(
+        "--compare-models",
+        help=(
+            "可选：逗号分隔多个脚本模型名；会逐个生成候选脚本并选择评分最高者。"
+        ),
+    )
     parser.add_argument("--glossary")
     parser.add_argument(
         "--provider",
@@ -107,6 +130,7 @@ def _add_generation_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--http-tts-url")
     parser.add_argument("--cosyvoice-url", default="http://127.0.0.1:50000")
     parser.add_argument("--silence-ms", type=int, default=220)
+    parser.add_argument("--make-video", action="store_true")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -153,11 +177,14 @@ def main() -> None:
                 Path(args.source),
                 target_language=args.target_language,
                 style=args.style,
+                script_backend=args.script_backend,
+                script_compare_models=_compare_models(args.compare_models),
                 duration_minutes=args.duration_minutes,
                 glossary=_glossary(args.glossary),
                 voice_a=args.voice_a,
                 voice_b=args.voice_b,
                 silence_ms=args.silence_ms,
+                make_video=args.make_video,
             )
         elif args.command == "import":
             manifest = pipeline.import_paper(
@@ -172,6 +199,8 @@ def main() -> None:
                 store.get(args.podcast_id),
                 target_language=args.target_language,
                 style=args.style,
+                script_backend=args.script_backend,
+                script_compare_models=_compare_models(args.compare_models),
                 duration_minutes=args.duration_minutes,
                 glossary=_glossary(args.glossary),
             )
@@ -181,6 +210,7 @@ def main() -> None:
                 voice_a=args.voice_a,
                 voice_b=args.voice_b,
                 silence_ms=args.silence_ms,
+                make_video=args.make_video,
             )
         else:
             if args.podcast_id:

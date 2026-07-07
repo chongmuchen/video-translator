@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -93,6 +94,32 @@ class PaperPodcastStore:
             )
             for path in paths
         ]
+
+    def delete(
+        self,
+        podcast_id: str,
+        *,
+        delete_outputs: bool = True,
+    ) -> list[Path]:
+        manifest = self.get(podcast_id)
+        removed: list[Path] = []
+        if delete_outputs:
+            for value in (manifest.audio_path, manifest.video_path):
+                if not value:
+                    continue
+                path = Path(value).resolve()
+                try:
+                    path.relative_to(self.outputs_dir.resolve())
+                except ValueError:
+                    continue
+                if path.exists():
+                    path.unlink()
+                    removed.append(path)
+        job_dir = self.job_dir(podcast_id)
+        if job_dir.exists():
+            shutil.rmtree(job_dir)
+            removed.append(job_dir)
+        return removed
 
     def write_json(
         self,

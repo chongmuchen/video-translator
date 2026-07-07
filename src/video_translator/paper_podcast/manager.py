@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
+from ..control import clear_cancel_request, mark_canceled, request_cancel
 from ..settings import Settings
+from ..task_queue import LocalTaskQueue
 from .models import (
     PaperPodcastManifest,
     PaperPodcastRequest,
@@ -19,6 +22,7 @@ class PaperPodcastManager:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = PaperPodcastStore(settings)
+        self.queue = LocalTaskQueue(settings)
         self.executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="paper-podcast",
@@ -37,13 +41,35 @@ class PaperPodcastManager:
     def _submit(
         self,
         manifest: PaperPodcastManifest,
-        function,
+        function: Callable[[], PaperPodcastManifest],
+        *,
+        task_type: str,
+        payload: dict | None = None,
     ) -> PaperPodcastManifest:
         with self._lock:
             active = self._futures.get(manifest.id)
             if active is not None and not active.done():
                 raise RuntimeError("论文播客任务正在执行。")
-            future = self.executor.submit(function)
+            clear_cancel_request(manifest)
+            self.store.save(manifest)
+            task_id = self.queue.enqueue(
+                resource_type="paper_podcast",
+                resource_id=manifest.id,
+                task_type=task_type,
+                payload=payload,
+            )
+
+            def run() -> PaperPodcastManifest:
+                self.queue.mark(task_id, "running")
+                try:
+                    result = function()
+                except Exception as exc:
+                    self.queue.mark(task_id, "failed", str(exc))
+                    raise
+                self.queue.mark(task_id, "completed")
+                return result
+
+            future = self.executor.submit(run)
             self._futures[manifest.id] = future
         future.add_done_callback(
             lambda done: self._forget(manifest.id, done)
@@ -74,6 +100,8 @@ class PaperPodcastManager:
                 manifest,
                 target_language=request.target_language,
                 style=request.style,
+                script_backend=request.script_backend,
+                script_compare_models=request.script_compare_models,
                 duration_minutes=request.duration_minutes,
                 glossary=request.glossary,
             )
@@ -83,8 +111,14 @@ class PaperPodcastManager:
                 voice_a=request.voice_a,
                 voice_b=request.voice_b,
                 silence_ms=request.silence_ms,
+                make_video=request.make_video,
             )
-        return self._submit(manifest, function)
+        return self._submit(
+            manifest,
+            function,
+            task_type=f"step:{step.value}",
+            payload={"style": request.style},
+        )
 
     def submit_all(
         self,
@@ -105,6 +139,8 @@ class PaperPodcastManager:
                 current,
                 target_language=request.target_language,
                 style=request.style,
+                script_backend=request.script_backend,
+                script_compare_models=request.script_compare_models,
                 duration_minutes=request.duration_minutes,
                 glossary=request.glossary,
             )
@@ -114,9 +150,26 @@ class PaperPodcastManager:
                 voice_a=request.voice_a,
                 voice_b=request.voice_b,
                 silence_ms=request.silence_ms,
+                make_video=request.make_video,
             )
 
-        return self._submit(manifest, run)
+        return self._submit(
+            manifest,
+            run,
+            task_type="run_all",
+            payload={"style": request.style},
+        )
+
+    def cancel(self, podcast_id: str) -> PaperPodcastManifest:
+        manifest = self.store.get(podcast_id)
+        with self._lock:
+            future = self._futures.get(podcast_id)
+            if future is None or future.done():
+                return manifest
+            queued = future.cancel()
+        if queued:
+            return mark_canceled(manifest, self.store)
+        return request_cancel(manifest, self.store)
 
     def _forget(
         self,

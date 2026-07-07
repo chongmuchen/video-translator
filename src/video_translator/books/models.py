@@ -46,6 +46,14 @@ BookOutputMode = Literal[
 ]
 
 BookOcrMode = Literal["auto", "always", "never"]
+BookReadingStatus = Literal[
+    "unread",
+    "reading",
+    "translated",
+    "reviewing",
+    "done",
+    "archived",
+]
 
 
 class BookStatus(str, Enum):
@@ -54,6 +62,7 @@ class BookStatus(str, Enum):
     translating = "translating"
     translated = "translated"
     rendered = "rendered"
+    canceled = "canceled"
     failed = "failed"
 
 
@@ -105,8 +114,19 @@ class BookStepRequest(BaseModel):
     output_mode: BookOutputMode = "translated_only"
     ocr_mode: BookOcrMode = "auto"
     ocr_languages: str = "eng"
+    ocr_backend: Literal["ocrmypdf", "docling"] = "ocrmypdf"
     glossary: dict[str, str] = Field(default_factory=dict)
     settings: RuntimeSettingsUpdate = Field(
         default_factory=RuntimeSettingsUpdate
     )
     translator_api_key_ref: str | None = None
+
+
+class BookLibraryUpdateRequest(BaseModel):
+    tags: list[str] | None = Field(default=None, max_length=50)
+    favorite: bool | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+    glossary: dict[str, str] | None = None
+    reading_status: BookReadingStatus | None = None
+    priority: int | None = Field(default=None, ge=0, le=100)
+    quality_score: float | None = Field(default=None, ge=0, le=100)

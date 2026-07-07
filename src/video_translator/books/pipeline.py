@@ -7,7 +7,9 @@ import json
 import logging
 from pathlib import Path
 
-from ..errors import PipelineError
+from ..control import mark_canceled, raise_if_canceled
+from ..errors import PipelineCanceled, PipelineError
+from ..metrics import record_step_metric
 from ..settings import Settings
 from ..pipeline.translator import SegmentTranslator
 from .epub import extract_epub, render_epub
@@ -18,6 +20,7 @@ from .professional_pdf import (
     PROFESSIONAL_PDF_OUTPUT_MODES,
     render_professional_pdf,
 )
+from .structured_ocr import extract_pdf_with_docling
 from .store import BookStore
 
 
@@ -53,28 +56,49 @@ class BookTranslationPipeline:
         *,
         ocr_mode: str = "auto",
         ocr_languages: str = "eng",
+        ocr_backend: str = "ocrmypdf",
     ) -> BookManifest:
         try:
-            source = Path(manifest.source_path)
-            if manifest.format == "pdf":
-                blocks, metadata = self._extract_pdf_with_optional_ocr(
-                    manifest,
-                    source,
-                    ocr_mode=ocr_mode,
-                    ocr_languages=ocr_languages,
-                )
-            else:
-                blocks, metadata = extract_epub(
-                    source,
-                    self.store.job_dir(manifest.id),
-                )
-            self.store.write_blocks(manifest, blocks)
-            manifest.metadata.update(metadata)
-            manifest.status = BookStatus.extracted
-            if "extract" not in manifest.completed_steps:
-                manifest.completed_steps.append("extract")
-            manifest.error = None
-            return self.store.save(manifest)
+            with record_step_metric(manifest, self.store, "extract"):
+                raise_if_canceled(manifest, self.store)
+                source = Path(manifest.source_path)
+                if manifest.format == "pdf":
+                    if ocr_backend == "docling":
+                        blocks, metadata = extract_pdf_with_docling(
+                            source,
+                            self.store.job_dir(manifest.id),
+                        )
+                        metadata.update(
+                            {
+                                "ocr_backend": "docling",
+                                "ocr_mode": ocr_mode,
+                                "ocr_languages": ocr_languages,
+                                "ocr_used": True,
+                            }
+                        )
+                    else:
+                        blocks, metadata = self._extract_pdf_with_optional_ocr(
+                            manifest,
+                            source,
+                            ocr_mode=ocr_mode,
+                            ocr_languages=ocr_languages,
+                        )
+                else:
+                    blocks, metadata = extract_epub(
+                        source,
+                        self.store.job_dir(manifest.id),
+                    )
+                raise_if_canceled(manifest, self.store)
+                self.store.write_blocks(manifest, blocks)
+                manifest.metadata.update(metadata)
+                manifest.status = BookStatus.extracted
+                if "extract" not in manifest.completed_steps:
+                    manifest.completed_steps.append("extract")
+                manifest.error = None
+                return self.store.save(manifest)
+        except PipelineCanceled:
+            mark_canceled(manifest, self.store)
+            raise
         except Exception as exc:
             self.store.fail(manifest, exc)
             raise
@@ -225,80 +249,86 @@ class BookTranslationPipeline:
         self.store.write_blocks(manifest, blocks)
 
         try:
-            if self.settings.translator_provider == "passthrough":
-                for block in pending:
-                    block.translated_text = block.source_text
-                self.store.write_blocks(manifest, blocks)
-            else:
-                translator = SegmentTranslator(
-                    self.settings,
-                    self.logger,
-                )
-                batches = self._batches(
-                    pending,
-                    max_items=max(
-                        1,
-                        self.settings.translation_batch_size,
-                    ),
-                )
-                for position, batch in enumerate(batches, start=1):
-                    payload = [
-                        {
-                            "id": index,
-                            "kind": block.kind,
-                            "text": block.source_text,
-                        }
-                        for index, block in enumerate(batch)
-                    ]
-                    system_prompt = (
-                        "你是严谨的出版级书籍译者和中文编辑。"
-                        "忠实、完整翻译，不概括、不删减、不添加原文没有的内容；"
-                        "保持段落功能、数字、引用、专名、术语和语气一致；"
-                        "中文使用自然、准确、适合正式出版的书面语。"
-                        "遇到原文确实残缺或不可辨认时写【原文不清】而不是猜测。"
-                        "只返回 JSON："
-                        '{"segments":[{"id":0,"text":"译文"}]}。'
-                    )
-                    user_prompt = (
-                        f"目标语言：{target_language}\n"
-                        "术语表："
-                        f"{json.dumps(glossary, ensure_ascii=False)}\n"
-                        f"批次：{position}/{len(batches)}\n"
-                        "请逐项完整翻译：\n"
-                        f"{json.dumps(payload, ensure_ascii=False)}"
-                    )
-                    result = translator.complete_json(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                    )
-                    translated = result.get("segments")
-                    if not isinstance(translated, list):
-                        raise PipelineError("书籍翻译缺少 segments。")
-                    values = {
-                        int(item["id"]): str(item["text"]).strip()
-                        for item in translated
-                        if isinstance(item, dict)
-                        and "id" in item
-                        and str(item.get("text", "")).strip()
-                    }
-                    missing = [
-                        index
-                        for index in range(len(batch))
-                        if index not in values
-                    ]
-                    if missing:
-                        raise PipelineError(
-                            f"书籍翻译批次缺少块：{missing}"
-                        )
-                    for index, block in enumerate(batch):
-                        block.translated_text = values[index]
-                    # Checkpoint after every model request.
+            with record_step_metric(manifest, self.store, "translate"):
+                if self.settings.translator_provider == "passthrough":
+                    for block in pending:
+                        raise_if_canceled(manifest, self.store)
+                        block.translated_text = block.source_text
                     self.store.write_blocks(manifest, blocks)
-            manifest.status = BookStatus.translated
-            if "translate" not in manifest.completed_steps:
-                manifest.completed_steps.append("translate")
-            manifest.error = None
-            return self.store.save(manifest)
+                else:
+                    translator = SegmentTranslator(
+                        self.settings,
+                        self.logger,
+                    )
+                    batches = self._batches(
+                        pending,
+                        max_items=max(
+                            1,
+                            self.settings.translation_batch_size,
+                        ),
+                    )
+                    for position, batch in enumerate(batches, start=1):
+                        raise_if_canceled(manifest, self.store)
+                        payload = [
+                            {
+                                "id": index,
+                                "kind": block.kind,
+                                "text": block.source_text,
+                            }
+                            for index, block in enumerate(batch)
+                        ]
+                        system_prompt = (
+                            "你是严谨的出版级书籍译者和中文编辑。"
+                            "忠实、完整翻译，不概括、不删减、不添加原文没有的内容；"
+                            "保持段落功能、数字、引用、专名、术语和语气一致；"
+                            "中文使用自然、准确、适合正式出版的书面语。"
+                            "遇到原文确实残缺或不可辨认时写【原文不清】而不是猜测。"
+                            "只返回 JSON："
+                            '{"segments":[{"id":0,"text":"译文"}]}。'
+                        )
+                        user_prompt = (
+                            f"目标语言：{target_language}\n"
+                            "术语表："
+                            f"{json.dumps(glossary, ensure_ascii=False)}\n"
+                            f"批次：{position}/{len(batches)}\n"
+                            "请逐项完整翻译：\n"
+                            f"{json.dumps(payload, ensure_ascii=False)}"
+                        )
+                        result = translator.complete_json(
+                            system_prompt=system_prompt,
+                            user_prompt=user_prompt,
+                        )
+                        translated = result.get("segments")
+                        if not isinstance(translated, list):
+                            raise PipelineError("书籍翻译缺少 segments。")
+                        values = {
+                            int(item["id"]): str(item["text"]).strip()
+                            for item in translated
+                            if isinstance(item, dict)
+                            and "id" in item
+                            and str(item.get("text", "")).strip()
+                        }
+                        missing = [
+                            index
+                            for index in range(len(batch))
+                            if index not in values
+                        ]
+                        if missing:
+                            raise PipelineError(
+                                f"书籍翻译批次缺少块：{missing}"
+                            )
+                        for index, block in enumerate(batch):
+                            block.translated_text = values[index]
+                        self.store.write_blocks(manifest, blocks)
+                manifest.status = BookStatus.translated
+                if "translate" not in manifest.completed_steps:
+                    manifest.completed_steps.append("translate")
+                manifest.error = None
+                return self.store.save(manifest)
+        except PipelineCanceled:
+            self.store.write_blocks(manifest, blocks)
+            mark_canceled(manifest, self.store)
+            raise
         except Exception as exc:
             self.store.write_blocks(manifest, blocks)
             self.store.fail(manifest, exc)
@@ -408,6 +438,7 @@ class BookTranslationPipeline:
         glossary: dict[str, str],
         ocr_mode: str = "auto",
         ocr_languages: str = "eng",
+        ocr_backend: str = "ocrmypdf",
     ) -> BookManifest:
         manifest = self.import_book(source, output_mode=output_mode)
         if output_mode in PROFESSIONAL_PDF_OUTPUT_MODES:
@@ -420,6 +451,7 @@ class BookTranslationPipeline:
             manifest,
             ocr_mode=ocr_mode,
             ocr_languages=ocr_languages,
+            ocr_backend=ocr_backend,
         )
         self.translate(
             manifest,

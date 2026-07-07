@@ -8,6 +8,10 @@ __pycache__/
 *.py[cod]
 
 # Local runtime data and generated media.
+data/*.log
+data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal
 data/jobs/*
 !data/jobs/.gitkeep
 data/outputs/*

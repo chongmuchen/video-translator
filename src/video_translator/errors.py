@@ -13,6 +13,9 @@ class PipelineError(VideoTranslatorError):
     """A pipeline stage failed."""
 
 
+class PipelineCanceled(VideoTranslatorError):
+    """A pipeline stage was canceled by the user."""
+
+
 class InvalidSourceError(VideoTranslatorError):
     """The requested input source is not allowed or not readable."""
-

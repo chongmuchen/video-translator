@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
+from ..control import clear_cancel_request, mark_canceled, request_cancel
 from ..settings import Settings
+from ..task_queue import LocalTaskQueue
 from .models import BookManifest, BookStep, BookStepRequest
 from .pipeline import BookTranslationPipeline
 from .professional_pdf import PROFESSIONAL_PDF_OUTPUT_MODES
@@ -16,6 +19,7 @@ class BookManager:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = BookStore(settings)
+        self.queue = LocalTaskQueue(settings)
         self.executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="book-translator",
@@ -34,12 +38,38 @@ class BookManager:
             self.store,
         )
 
-    def _submit(self, manifest: BookManifest, function) -> BookManifest:
+    def _submit(
+        self,
+        manifest: BookManifest,
+        function: Callable[[], BookManifest],
+        *,
+        task_type: str,
+        payload: dict | None = None,
+    ) -> BookManifest:
         with self._lock:
             active = self._futures.get(manifest.id)
             if active is not None and not active.done():
                 raise RuntimeError("书籍任务正在执行。")
-            future = self.executor.submit(function)
+            clear_cancel_request(manifest)
+            self.store.save(manifest)
+            task_id = self.queue.enqueue(
+                resource_type="book",
+                resource_id=manifest.id,
+                task_type=task_type,
+                payload=payload,
+            )
+
+            def run() -> BookManifest:
+                self.queue.mark(task_id, "running")
+                try:
+                    result = function()
+                except Exception as exc:
+                    self.queue.mark(task_id, "failed", str(exc))
+                    raise
+                self.queue.mark(task_id, "completed")
+                return result
+
+            future = self.executor.submit(run)
             self._futures[manifest.id] = future
         future.add_done_callback(
             lambda done: self._forget(manifest.id, done)
@@ -70,6 +100,7 @@ class BookManager:
                 manifest,
                 ocr_mode=request.ocr_mode,
                 ocr_languages=request.ocr_languages,
+                ocr_backend=request.ocr_backend,
             )
         elif step == BookStep.translate:
             function = lambda: pipeline.translate(
@@ -83,7 +114,12 @@ class BookManager:
                 mode=request.output_mode,
                 target_language=request.target_language,
             )
-        return self._submit(manifest, function)
+        return self._submit(
+            manifest,
+            function,
+            task_type=f"step:{step.value}",
+            payload={"output_mode": request.output_mode},
+        )
 
     def submit_all(
         self,
@@ -108,6 +144,7 @@ class BookManager:
                     current,
                     ocr_mode=request.ocr_mode,
                     ocr_languages=request.ocr_languages,
+                    ocr_backend=request.ocr_backend,
                 )
             current = self.store.get(book_id)
             # Translation hashes make this a no-op when content settings did
@@ -125,7 +162,23 @@ class BookManager:
                 target_language=request.target_language,
             )
 
-        return self._submit(manifest, run)
+        return self._submit(
+            manifest,
+            run,
+            task_type="run_all",
+            payload={"output_mode": request.output_mode},
+        )
+
+    def cancel(self, book_id: str) -> BookManifest:
+        manifest = self.store.get(book_id)
+        with self._lock:
+            future = self._futures.get(book_id)
+            if future is None or future.done():
+                return manifest
+            queued = future.cancel()
+        if queued:
+            return mark_canceled(manifest, self.store)
+        return request_cancel(manifest, self.store)
 
     def _forget(
         self,

@@ -169,6 +169,9 @@ make mux JOB_ID='任务ID'
 | `ASR_DEVICE` | `auto` | 仅 faster-whisper 使用：CPU 填 `cpu`，NVIDIA 机器可填 `cuda`。 |
 | `ASR_COMPUTE_TYPE` | `auto` | 仅 faster-whisper 使用：CPU 推荐 `int8`，NVIDIA GPU 推荐 `float16`。 |
 | `ASR_UNCLEAR_THRESHOLD` | `0.45` | 低于该置信度的语音不猜测，字幕标为 `【原音不清，未能可靠识别】`；原始识别候选仍保留在 `segments.json`。 |
+| `ENABLE_DIARIZATION` | `false` | 可选说话人分离。正式使用前需安装 `.[diarization]` 并准备 Hugging Face Token。 |
+| `DIARIZATION_MODEL` | `pyannote/speaker-diarization-3.1` | 默认 pyannote 官方模型；首次使用需要同意模型条款。 |
+| `DIARIZATION_AUTH_TOKEN` | 空 | Hugging Face Token。网页/API 不会把它写进任务 manifest；命令行不要提交到 Git。 |
 | `TRANSCRIBE_ARGS` | 空 | 已识别任务重新执行时填 `--force`。 |
 
 翻译参数：
@@ -200,12 +203,15 @@ make mux JOB_ID='任务ID'
 | `TTS_HTTP_URL` | 空 | 仅通用 HTTP TTS 使用。 |
 | `COSYVOICE_BASE_URL` | `http://127.0.0.1:50000` | 仅 CosyVoice 使用。 |
 | `COSYVOICE_MODE` | `sft` | 首次推荐 `sft`；其他模式需参考音频/指令配置。 |
+| `SPEAKER_VOICE_MAP` | 空 | 说话人到音色映射，例如 JSON `{"SPEAKER_00":"zh-CN-XiaoxiaoNeural"}` 或 `SPEAKER_00=voiceA,SPEAKER_01=voiceB`。 |
 | `DUB_SAMPLE_RATE` | `24000` | 中文语音推荐 24 kHz。 |
 | `MAX_TEMPO_FACTOR` | `1.8` | 不是统一 1.8 倍：先按 1.0，只有读不完的片段才加速，最高不超过 1.8。 |
 | `KEEP_ORIGINAL_AUDIO` | `true` | 视频推荐保留第二条原声音轨。 |
 | `DUCK_ORIGINAL_AUDIO` | `true` | 推荐开启，中文讲话时自动压低原声。 |
 | `BURN_SUBTITLES` | `false` | 推荐软字幕；播放器兼容性不好时再烧录。 |
 | `ENABLE_DEMUCS` | `false` | 实验性且耗时，确认安装 Demucs 后再启用。 |
+| `ENABLE_LIP_SYNC` | `false` | 可选口型同步。需要自己安装 Wav2Lip/MuseTalk 等外部工具。 |
+| `LIP_SYNC_COMMAND` | 空 | 外部命令模板，支持 `{video}`、`{muxed}`、`{audio}`、`{subtitles}`、`{output}`、`{ffmpeg}`、`{ffprobe}`。 |
 
 每一步正常重复执行会自动跳过或从缺失部分继续。需要覆盖旧结果时，对应的
 `*_ARGS` 传 `--force`；它会让该步骤之后的任务状态失效并要求重新执行。
@@ -236,26 +242,26 @@ make mux JOB_ID='任务ID'
 | YouTube/B站输入 | 🟡 | `yt-dlp`、Deno、Cookies、域名和时长限制 | URL 安全单元测试 | 使用已授权真实链接人工验收 |
 | Apple Podcasts | 🟡 | Apple Lookup API→发布者 RSS；支持列目录、最新 N 集、指定集、全集下载，以及纯音频中文混音/原声双音轨 M4A 输出 | 真实节目成功读取 359 集 RSS；本地音频提取测试；纯音频 M4A 封装集成测试 | 更长节目和更多播放器兼容性 |
 | 音频提取 | ✅ | FFmpeg 输出 16 kHz 单声道 WAV | 真实 FFmpeg 集成测试 | 无音轨、损坏媒体等异常样本 |
-| 语音识别 | 🟡 | 可选 MLX Apple GPU 或 faster-whisper CPU/CUDA；词级时间戳、片段合并、低置信度特殊占位及原始候选保留；占位时间槽不朗读猜测内容 | 两个适配器和模糊片段静音自动化测试；本机 MLX/Metal tiny.en 真实推理通过 | `large-v3` 质量、阈值与长视频性能 |
+| 语音识别 | 🟡 | 可选 MLX Apple GPU 或 faster-whisper CPU/CUDA；词级时间戳、片段合并、低置信度特殊占位及原始候选保留；可选 pyannote 说话人分离；占位时间槽不朗读猜测内容 | 两个适配器、模糊片段静音和说话人匹配自动化测试；本机 MLX/Metal tiny.en 真实推理通过 | `large-v3` 质量、阈值、长视频性能和 pyannote 权重授权验收 |
 | 中文翻译 | 🟡 | Codex CLI、Ollama、Kimi、MiniMax、DeepSeek 和通用 OpenAI-compatible 接口；Plus 分档、批次上下文、术语表和逐批断点 | JSON/ID/断点校验、云端预设、Codex CLI 真实短句翻译 | 仍需用完整长视频人工评价译文质量 |
-| Edge 中文 TTS | ✅ | 单一中文音色，逐片段生成 | 本机真实语音生成通过 | 长文本、限流和失败重试 |
+| Edge 中文 TTS | ✅ | 单一中文音色或按 `speaker` 映射多音色，逐片段生成；支持超时、重试、指数退避和过长译文自动缩写重合成 | 本机真实语音生成、TTS 重试/缩写路径和 speaker→voice 映射自动化测试 | 更多声音和长节目人工听感调优 |
 | 通用 HTTP TTS | 🟡 | JSON 请求，返回音频字节 | 代码已实现 | 尚未连接真实服务 |
 | CosyVoice | 🟡 | 兼容官方 FastAPI 的 SFT、zero-shot、cross-lingual、instruct 接口 | PCM→WAV 封装已实现 | 需要独立 CosyVoice 服务和授权声音验收 |
-| 配音时长对齐 | ✅ | 重采样、`atempo` 加速、补静音、裁剪、时间轴拼接 | 单元和端到端集成测试 | 极端长译文的二次缩写 |
+| 配音时长对齐 | ✅ | 重采样、`atempo` 加速、补静音、裁剪、时间轴拼接；超长片段会先尝试缩写译文再合成 | 单元和端到端集成测试 | 极端口播密度的人工听感调优 |
 | 原声自动压低 | ✅ | 根据完整识别时间槽生成控制轨，再用 FFmpeg sidechain compression；中文提前结束也不会释放英文尾音 | 控制轨边界单元测试、真实 FFmpeg 集成测试 | 不同节目类型的参数调优 |
 | 人声/BGM 分离 | 🟡 | 可选 Demucs `no_vocals` | 调用代码已实现 | 依赖未默认安装，尚未做模型验收 |
-| 字幕与双音轨 MP4 | ✅ | 中文软字幕、中文配音默认音轨、可选原声音轨 | 自动检查 1 视频 + 2 音频 + 1 字幕流 | 更多播放器兼容性 |
+| 字幕与双音轨 MP4 | ✅ | 中文软字幕、中文配音默认音轨、可选原声音轨；可选调用外部 lip-sync 命令生成最终视频 | 自动检查 1 视频 + 2 音频 + 1 字幕流；lip-sync 命令模板单元覆盖 | 更多播放器兼容性；具体 lip-sync 模型权重验收 |
 | CLI | ✅ | 原 CLI 加根目录 `main.py`：批量下载、分步执行、状态、断点恢复、完整运行 | 冒烟测试及本地 download→extract 验证 | 更完善的交互式界面 |
-| Web/API | ✅ | 视频/书籍任务列表、模板自动执行、钥匙串密钥、参数说明、日志、片段预览和输出下载 | API 自动化测试、真实历史任务加载 | 任务取消和合集批量操作 |
+| Web/API | ✅ | 视频/书籍/论文播客任务列表、模板自动执行、钥匙串密钥、参数说明、日志、片段预览、选中片段重译/重配音、取消任务和输出下载 | API 自动化测试、真实历史任务加载 | 合集批量操作和更强的生产权限系统 |
 | EPUB 书籍翻译 | 🟡 | 按 spine 抽取、逐批翻译、保留图片/CSS/链接；纯译文或段落双语；重建导航文本 | 含图片和目录链接的 EPUB 自动化测试 | 大型复杂 EPUB 与不同阅读器人工验收 |
-| PDF 书籍翻译 | 🟡 | 内置固定页数覆盖排版、保留原页图片、中文字体嵌入、纯译文或块内双语、目录标题更新；扫描 PDF 可通过 OCRmyPDF 先生成文字层；复杂 PDF 可用 BabelDOC/PDFMathTranslate 外部引擎 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 复杂彩色背景、极端密排页面、扫描件表格/公式结构化 OCR |
-| 书籍中间缓存 | ✅ | 导入→抽取→翻译→排版独立执行；文本块、译文哈希和逐批断点长期保留 | 改排版模式不重复翻译的自动化测试 | 缓存清理和版本迁移工具 |
-| 任务状态与日志 | ✅ | 单机 JSON manifest、每任务日志和中间文件 | JobStore 单元测试 | 数据库、恢复和分布式队列 |
-| 多说话人/多音色 | ⬜ | 尚未实现 | — | diarization、说话人到音色映射 |
-| 口型同步 | ⬜ | 尚未实现 | — | 需要独立模型和画面重编码 |
-| 生产任务系统 | ⬜ | 当前仅单进程线程池 | — | Redis/Celery、对象存储、清理和重试 |
+| PDF 书籍翻译 | 🟡 | 内置固定页数覆盖排版、保留原页图片、中文字体嵌入、纯译文或块内双语、目录标题更新；扫描 PDF 可通过 OCRmyPDF 生成文字层，也可选 Docling 结构化抽取；复杂 PDF 可用 BabelDOC/PDFMathTranslate 外部引擎 | 真实 PDF 生成、页数/目录自动检查和逐页渲染目检 | 极端密排/低清晰扫描件仍需人工校样；Marker/PaddleOCR 可作为后续增强后端 |
+| 书籍中间缓存 | ✅ | 导入→抽取→翻译→排版独立执行；文本块、译文哈希、逐批断点、版本输出和阅读库元数据长期保留；支持标签、阅读状态、优先级、质量评分、排序过滤和过期中间文件清理 | 改排版模式不重复翻译、清理命令、阅读库元数据和排序 API 自动化测试 | 版本迁移策略 |
+| 任务状态与日志 | ✅ | 单机 JSON manifest、每任务日志、中间文件和 SQLite 任务队列记录 | JobStore、任务队列和 API 单元测试 | 多实例部署时迁移到 Redis/Celery |
+| 多说话人/多音色 | 🟡 | 论文播客支持双主持人 A/B 音色；视频翻译可选 pyannote diarization，并按 `SPEAKER_00=voice` 映射音色 | 论文播客多音色、视频 speaker 分配和 TTS 映射自动化测试 | pyannote 模型下载、授权条款和长视频人工验收 |
+| 口型同步 | 🟡 | 已支持外部命令模板调用 Wav2Lip/MuseTalk 等工具，默认关闭 | 命令模板、输出路径和 mux 集成逻辑自动化测试 | 需要用户安装具体模型并验收画面质量 |
+| 生产任务系统 | 🟡 | 单机线程池执行；SQLite 记录队列/运行结果；支持合作式取消、步骤指标、质量报告、授权声明、每日配额、审计事件、删除任务和中间文件清理 | API/CLI 自动化测试 | 多用户权限、Redis/Celery、外部数据库和对象存储 |
 
-当前自动化测试基线：**75 项测试通过**。
+当前自动化测试基线：**84 项测试通过**。
 
 ## 2. 每个任务的中间产物
 
@@ -462,7 +468,7 @@ bootstrap 会：
 当前预期：
 
 ```text
-39 passed
+84 passed
 ```
 
 ## 5. 第三步：验证真实中文 TTS
@@ -748,10 +754,18 @@ printf 'FFmpeg: %s\nFFprobe: %s\n' "$FFMPEG" "$FFPROBE"
 ```dotenv
 VT_ASR_BACKEND=mlx_whisper
 VT_ASR_MODEL=tiny
-VT_TRANSLATOR_BASE_URL=http://127.0.0.1:11434/v1
-VT_TRANSLATOR_MODEL=qwen3:8b
+VT_TRANSLATOR_PROVIDER=codex_cli
+VT_TRANSLATOR_CODEX_STRATEGY=economy
 VT_TTS_PROVIDER=edge
 VT_TTS_VOICE=zh-CN-XiaoxiaoNeural
+```
+
+如果已经启动 Ollama，也可以把翻译配置换成：
+
+```dotenv
+VT_TRANSLATOR_PROVIDER=ollama
+VT_TRANSLATOR_BASE_URL=http://127.0.0.1:11434/v1
+VT_TRANSLATOR_MODEL=qwen3:8b
 ```
 
 运行完整流程：
@@ -761,6 +775,11 @@ VT_TTS_VOICE=zh-CN-XiaoxiaoNeural
   work/acceptance/source-en.mp4 \
   --source-language en
 ```
+
+当前本机已用 15 秒短视频完成一次真实验收：faster-whisper tiny.en →
+Codex CLI economy → Edge TTS → 对齐 → 双音轨 MP4，输出文件位于
+`data/outputs/local-short-95a83c81.mp4`。如果你清理了 `data/`，按本节步骤
+重新跑一遍即可。
 
 验收顺序：
 
@@ -855,15 +874,18 @@ make web
 - 每个步骤都显示参数含义、默认值、推荐值和等价 Make 命令；
 - 页面可以查看任务目录、`manifest.json`、`pipeline.log`、每一步进度、
   继续/强制重跑规则、中间产物路径、最终下载入口和带起止时间的识别片段；
+- 语音识别步骤可选 pyannote 说话人分离；配音步骤可配置 speaker→voice 映射；
+- 封装步骤可选外部 lip-sync 命令模板，把 Wav2Lip/MuseTalk 等工具接到最终 MP4；
 - 页面左侧可开关“任务完成叮一声”，默认开启；设置只保存在当前浏览器；
 - API 默认只监听 `127.0.0.1`，任务和媒体文件保存在本机。
 
-注意：当前后台执行器仍是 Web 服务进程内的线程池。重启 `make web` 会中断正在
-运行的下载、翻译或排版线程；已经写入 `manifest.json`、`segments.json`、
-`blocks.json` 和输出文件的中间结果会保留。视频任务可从失败步骤继续；翻译步骤
-会保留 `segments.json` 中已有译文，只处理未翻译片段。书籍任务可点击
-“继续完成全部”或重新执行翻译步骤，已翻译且缓存键未变化的文本块会跳过。页面会
-在任务详情中显示当前属于“继续”还是“强制重跑”。
+注意：当前后台执行器仍是单机 Web 服务进程内的线程池；SQLite 会持久记录队列、
+开始/结束时间和失败信息，但不会在服务重启后自动恢复正在运行的 Python 线程。
+重启 `make web` 会中断正在运行的下载、翻译或排版线程；已经写入
+`manifest.json`、`segments.json`、`blocks.json` 和输出文件的中间结果会保留。
+视频任务可从失败步骤继续；翻译步骤会保留 `segments.json` 中已有译文，只处理
+未翻译片段。书籍任务可点击“继续完成全部”或重新执行翻译步骤，已翻译且缓存键
+未变化的文本块会跳过。页面会在任务详情中显示当前属于“继续”还是“强制重跑”。
 
 当前网页覆盖的步骤：
 
@@ -920,7 +942,27 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 curl http://127.0.0.1:8000/api/jobs
 curl http://127.0.0.1:8000/api/jobs/{job_id}
 curl http://127.0.0.1:8000/api/jobs/{job_id}/log
+curl http://127.0.0.1:8000/api/tasks
+curl http://127.0.0.1:8000/api/audit/events
 ```
+
+如果在 `.env` 开启 `VT_REQUIRE_CONTENT_AUTHORIZATION=true`，新建任务需要声明内容
+授权。API 可在创建请求中加入：
+
+```json
+{
+  "authorization": {
+    "authorized": true,
+    "rights_basis": "owned",
+    "notes": "本地测试素材"
+  }
+}
+```
+
+`rights_basis` 可填写 `owned`、`licensed`、`public_domain`、`fair_use` 或
+`other`。每日新建任务配额可用 `VT_MAX_JOBS_PER_DAY` 设置；`0` 表示不限制。
+审计事件保存在本机 `data/governance.sqlite3`，任务队列记录保存在
+`data/task-queue.sqlite3`，这两个文件已加入 `.gitignore`。
 
 执行音频抽取：
 
@@ -959,6 +1001,22 @@ curl http://127.0.0.1:8000/api/jobs/{job_id}/segments
 curl -L -o translated.mp4 \
   http://127.0.0.1:8000/api/jobs/{job_id}/download
 ```
+
+删除任务和本机输出文件：
+
+```bash
+curl -X DELETE \
+  'http://127.0.0.1:8000/api/jobs/{job_id}?delete_outputs=true'
+
+curl -X DELETE \
+  'http://127.0.0.1:8000/api/books/{book_id}?delete_outputs=true'
+
+curl -X DELETE \
+  'http://127.0.0.1:8000/api/paper-podcasts/{podcast_id}?delete_outputs=true'
+```
+
+正在运行的任务会返回 HTTP 409，避免删除后台还在写入的文件。`delete_outputs=false`
+时只移除任务记录和任务目录中可安全删除的中间产物，不会碰原始外部路径。
 
 安全检查：
 
@@ -1089,6 +1147,30 @@ make book-status BOOK_ID='书籍任务ID'
 这些会影响译文的值不变时，失败后继续或重新排版不会重复读取、翻译前面的内容，
 可以明显减少 Plus/API 额度消耗。
 
+阅读库排序/标注 API：
+
+```bash
+curl -X PATCH \
+  http://127.0.0.1:8000/api/books/{book_id}/library \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tags": ["transformer", "must-read"],
+    "favorite": true,
+    "reading_status": "reading",
+    "priority": 90,
+    "quality_score": 95,
+    "summary": "注意力机制经典论文",
+    "glossary": {"attention": "注意力"}
+  }'
+
+curl 'http://127.0.0.1:8000/api/books?tag=transformer&reading_status=reading&sort_by=quality_score&descending=true'
+```
+
+`reading_status` 可用 `unread`、`reading`、`translated`、`reviewing`、
+`done`、`archived`；`priority` 和 `quality_score` 都是 0～100。
+这套字段会保存在 `book-manifest.json` 的 `metadata.library`，网页历史任务
+可以直接复用来做论文阅读队列和排序。
+
 排版处理原则：
 
 - EPUB 按 OPF spine 读取章节，保留原图、CSS、资源和内部链接；目录使用链接而非
@@ -1097,6 +1179,10 @@ make book-status BOOK_ID='书籍任务ID'
   会调用 OCRmyPDF 生成带文字层的中间 PDF，再复用现有翻译/排版流程。中间文件保存在
   `data/books/jobs/{书名}--{ID}/ocr/`，包括 `source-ocr.pdf`、`source-ocr.txt`
   和 `ocrmypdf.log`；
+- 如果选择 `BOOK_OCR_BACKEND=docling`，会使用 Docling 的结构化文档转换能力导出
+  阅读顺序 Markdown/JSON，再把 Markdown 段落转成可翻译块。中间文件保存在
+  `data/books/jobs/{书名}--{ID}/structured-ocr/docling/`，包括 `document.md`
+  和 `document.json`；
 - 专业 PDF 模式调用 PDFMathTranslate / BabelDOC；首次运行会通过 `uv` 准备
   Python 3.12 隔离环境、DocLayout 模型和中文字体。Fast 后端通常更快且不会额外
   加页眉说明；BabelDOC 后端更接近新一代语义/版面 IR，但可能在页顶加入来源说明；
@@ -1106,9 +1192,9 @@ make book-status BOOK_ID='书籍任务ID'
 - 因 PDF 采用固定页数，原页码不会发生漂移；内容过密无法在最低字号内装下时，
   任务 metadata 会记录 `layout_warnings`，应人工检查对应页面；
 - 复杂彩色背景、环绕图文、多栏扫描件和低清晰度扫描仍需人工校样。OCRmyPDF
-  基于 Tesseract，主要解决“先让扫描 PDF 有文字可翻译”；表格、公式和阅读顺序的
-  结构化 OCR 后续会接 Docling/Marker/PaddleOCR 这类更重的后端。严谨出版的最终版本
-  应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
+  基于 Tesseract，主要解决“先让扫描 PDF 有文字可翻译”；Docling 更适合阅读顺序、
+  表格和结构化导出。Marker/PaddleOCR 这类更重的后端仍保留为后续增强选项。严谨
+  出版的最终版本应逐页检查，工具不能承诺自动排版在所有原书上完全无误。
 
 OCR 依赖安装：
 
@@ -1131,6 +1217,23 @@ OCR 语言：
 - 英文论文：`eng`
 - 简体中文：`chi_sim`
 - 中英混排：`chi_sim+eng`
+
+OCR 后端：
+
+| 后端 | 命令参数 | 适合场景 | 依赖 |
+| --- | --- | --- | --- |
+| OCRmyPDF | `BOOK_OCR_BACKEND=ocrmypdf` | 扫描 PDF 先生成文字层，稳定、省心 | `brew install tesseract tesseract-lang ghostscript` |
+| Docling | `BOOK_OCR_BACKEND=docling` | 需要更好的阅读顺序、表格/结构化 Markdown/JSON | `pip install '.[structured-ocr]'`，若 Python 版本不兼容建议单独环境 |
+
+示例：
+
+```bash
+make book-run \
+  BOOK_FILE='/path/scanned.pdf' \
+  BOOK_OCR_MODE=auto \
+  BOOK_OCR_BACKEND=docling \
+  BOOK_MODE=translated_only
+```
 
 论文排版当前开发进展：
 
@@ -1156,18 +1259,20 @@ OCR 语言：
   的每一种论文版本，便于下载对比。
 - 已完成：如果原 PDF 页面含图片/图表，任务 metadata 会记录排版警告，提醒最终版
   对照原 PDF 校样。
-- 已完成：扫描版 PDF 的 OCRmyPDF 文字层生成和自动抽取 fallback。
-- 未完成：扫描版论文的结构化 OCR、专业引擎的逐页质量评分、批量论文排序/标签/阅读队列。
-  公式、图表、表格、脚注和双栏浮动体应优先使用 `pdf2zh_*` / `babeldoc_*`
-  专业模式；扫描件如果需要表格/公式结构化识别，后续应使用 Docling/Marker/PaddleOCR
-  高级后端，而不是内置 `paper_*` 草稿模式。
+- 已完成：扫描版 PDF 的 OCRmyPDF 文字层生成、自动抽取 fallback，以及 Docling
+  结构化 Markdown/JSON 抽取后端。
+- 已完成：批量论文/书籍阅读库的标签、收藏、摘要、术语表、阅读状态、优先级、
+  质量评分和排序过滤 API。公式、图表、表格、
+  脚注和双栏浮动体应优先使用 `pdf2zh_*` / `babeldoc_*` 专业模式；扫描件如果需要
+  更强的公式/版面语义识别，后续可继续接 Marker/PaddleOCR，而不是只依赖内置
+  `paper_*` 草稿模式。
 
 ### 9B. 论文音频博客 / 讲解播客
 
-这个功能用于“先听懂论文”，不是翻译整本 PDF。第一版流程是：
+这个功能用于“先听懂论文”，不是翻译整本 PDF。当前流程是：
 
 ```text
-PDF → 抽取论文文本 → 生成中文讲解笔记 → 生成播客脚本 → TTS 合成 MP3
+PDF → 抽取论文文本 → 生成中文讲解笔记 → 生成/对比播客脚本 → TTS 合成 MP3 → 可选合成讲解视频 MP4
 ```
 
 网页入口：左侧点“论文讲解播客”。推荐第一轮这样试：
@@ -1175,9 +1280,11 @@ PDF → 抽取论文文本 → 生成中文讲解笔记 → 生成播客脚本 �
 1. 上传一篇文本型 PDF，例如 Attention Is All You Need；
 2. 风格选择“双人深度讲解”；
 3. 脚本生成后端优先选 Ollama，本地模型可用 `qwen3:8b`、Qwen2.5/3
-   系列或其他中文能力较好的开源模型；
+   系列或其他中文能力较好的开源模型；如果想比较质量，可在“脚本候选模型”里填
+   `qwen3:8b,qwen3:14b` 这类逗号分隔列表；
 4. 如果已经部署 CosyVoice，语音后端选 CosyVoice；否则先用 Edge TTS 看效果；
-5. 勾选“导入后自动生成脚本和音频”，等待历史任务显示“已完成”后下载 MP3。
+5. 勾选“导入后自动生成脚本和音频”，等待历史任务显示“已完成”后下载 MP3；
+   如果同时勾选“生成讲解视频”，会把论文封面/图表页渲染为幻灯片并合成 MP4。
 
 中间文件保存在：
 
@@ -1188,20 +1295,24 @@ data/paper-podcasts/jobs/{论文名}--{ID}/
 ├── paper-notes.json       # 分块阅读笔记
 ├── podcast-script.json    # 可机读脚本
 ├── podcast-script.md      # 可人工编辑的讲解稿
+├── script-quality.json    # 脚本启发式评分、风险提示和事实核查提示
+├── script-comparison.json # 可选：多模型候选脚本对比报告
 └── tts/                   # 分句语音片段
 
 data/paper-podcasts/outputs/
-└── {论文名}-paper-podcast-{style}-{ID}.mp3
+├── {论文名}-paper-podcast-{style}-{ID}.mp3
+└── {论文名}-paper-podcast-{style}-{ID}.mp4  # 可选讲解视频
 ```
 
 继续 / 重试规则：
 
 - 已抽取文本会复用；
 - 讲解脚本的缓存键包含论文文本、目标语言、风格、时长、术语表、provider、模型和
-  Codex 策略；这些不变时继续执行不会重复生成脚本；
+  Codex 策略；如果启用候选模型对比，候选模型列表也会进入缓存键。这些不变时
+  继续执行不会重复生成脚本；
 - 更换音色或 TTS 后端时，可以只重跑“3. 音频”，不会重新生成脚本；
-- 如果是扫描版 PDF，建议先在书籍翻译里使用 OCRmyPDF 抽取；论文播客后续也会复用
-  同一套 OCR 抽取能力。
+- 如果是扫描版 PDF，建议先在书籍翻译里使用 OCRmyPDF 或 Docling 抽取；论文播客
+  当前仍以文本型 PDF 抽取为主，后续可继续复用同一套结构化 OCR 后端。
 
 备用命令行：
 
@@ -1211,6 +1322,19 @@ make paper-podcast-run \
   PAPER_PODCAST_PROVIDER=ollama \
   PAPER_PODCAST_MODEL='qwen3:8b' \
   PAPER_PODCAST_TTS_PROVIDER=edge
+
+# 比较多个本地模型的脚本质量，并自动选择评分最高的脚本继续合成
+make paper-podcast-run \
+  PAPER_FILE='/绝对路径/paper.pdf' \
+  PAPER_PODCAST_PROVIDER=ollama \
+  PAPER_PODCAST_MODEL='qwen3:8b' \
+  PAPER_PODCAST_COMPARE_MODELS='qwen3:8b,qwen3:14b' \
+  PAPER_PODCAST_SCRIPT_BACKEND=notebooklm
+
+# 同时生成讲解视频
+make paper-podcast-run \
+  PAPER_FILE='/绝对路径/paper.pdf' \
+  PAPER_PODCAST_MAKE_VIDEO=true
 ```
 
 开源优先建议：
@@ -1593,6 +1717,9 @@ make transcribe \
 | `ASR_DEVICE` | `auto` | 只对 faster-whisper 生效。`auto` 会在存在 NVIDIA CUDA 时选择 `cuda`，否则选择 `cpu`。 |
 | `ASR_COMPUTE_TYPE` | `auto` | 只对 faster-whisper 生效。CPU 推荐 `int8`，NVIDIA CUDA 推荐 `float16`。 |
 | `ASR_UNCLEAR_THRESHOLD` | `0.45` | 综合词概率、平均 log probability 和无语音概率得到置信度。低于阈值时不让翻译模型猜测，中文字幕显示 `【原音不清，未能可靠识别】`。设为 `0` 可关闭。 |
+| `ENABLE_DIARIZATION` | `false` | 是否在 ASR 后继续跑说话人分离。开启后会给 `segments.json` 的片段写入 `speaker`，后续 TTS 可按说话人选不同音色。 |
+| `DIARIZATION_MODEL` | `pyannote/speaker-diarization-3.1` | pyannote 模型名。首次使用需要在 Hugging Face 同意模型条款，并确保本机能下载权重。 |
+| `DIARIZATION_AUTH_TOKEN` | 空 | Hugging Face Token。也可写入环境变量 `VT_DIARIZATION_AUTH_TOKEN`；不建议写进 shell 历史或提交到 Git。 |
 | `TRANSCRIBE_ARGS` | 空 | 传给分步执行器的附加参数。当前最常用的是 `--force`，用于重新执行已经完成的识别步骤。 |
 
 常用模型：
@@ -1622,6 +1749,28 @@ make transcribe \
 被标记为模糊的片段仍在 `segments.json` 保存 `raw_source_text`、置信度和
 `asr_unclear=true`，方便后续人工修正；占位文本不会发送给翻译模型，也不会被
 中文 TTS 朗读，该时间槽会生成静音，只在字幕中提示观众。
+
+需要多说话人配音时，先安装并启用 diarization：
+
+```bash
+.venv/bin/pip install -e ".[diarization]"
+
+make transcribe \
+  JOB_ID='JOB_ID' \
+  ENABLE_DIARIZATION=true \
+  DIARIZATION_AUTH_TOKEN='hf_...' \
+  SOURCE_LANGUAGE=en
+```
+
+识别完成后检查 `segments.json` 中是否出现 `speaker` 字段。然后按说话人配置音色：
+
+```bash
+make synthesize \
+  JOB_ID='JOB_ID' \
+  SPEAKER_VOICE_MAP='{"SPEAKER_00":"zh-CN-XiaoxiaoNeural","SPEAKER_01":"zh-CN-YunxiNeural"}'
+```
+
+如果某个片段没有 speaker 或没有映射，会回退到 `TTS_VOICE` 默认音色。
 
 当前这台 Apple Silicon 机器可以明确写成：
 
@@ -1787,6 +1936,36 @@ VT_ENABLE_DEMUCS=true
 
 Demucs 首次运行会下载模型，CPU 处理很慢，因此它不是 MVP 默认路径。
 
+## 12A. 可选验证口型同步
+
+项目不内置 lip-sync 模型权重，但 mux 阶段已经支持外部命令模板。你可以把
+Wav2Lip、MuseTalk 或其他工具安装在独立环境，然后让本项目把原视频、中文配音
+时间轴和字幕路径传给它。
+
+命令模板可使用这些占位符：
+
+| 占位符 | 含义 |
+|---|---|
+| `{video}` | 原始输入视频，通常是 `source.mp4` |
+| `{muxed}` | 已完成字幕/双音轨封装、但尚未 lip-sync 的中间 MP4 |
+| `{audio}` | `dub-timeline.wav`，完整中文配音时间轴 |
+| `{subtitles}` | `zh-CN.srt` |
+| `{output}` | lip-sync 后的最终 MP4 输出路径 |
+| `{ffmpeg}` / `{ffprobe}` | 当前项目找到的 FFmpeg/FFprobe |
+
+示例：
+
+```bash
+make mux \
+  JOB_ID='JOB_ID' \
+  ENABLE_LIP_SYNC=true \
+  LIP_SYNC_COMMAND='python /path/to/Wav2Lip/inference.py --face {video} --audio {audio} --outfile {output}'
+```
+
+启用后，普通封装会先写到 `*-pre-lipsync.mp4`，外部命令成功后最终输出仍是
+`data/outputs/{title}-{job_id}.mp4`。如果外部命令失败，任务会失败并保留日志；
+可修正命令后重新执行 `make mux ... MUX_ARGS="--force"`。
+
 ## 13. 术语表验证
 
 创建 `work/acceptance/glossary.json`：
@@ -1859,15 +2038,19 @@ Demucs 首次运行会下载模型，CPU 处理很慢，因此它不是 MVP 默�
 
 ## 16. 当前 MVP 的边界
 
-- 单一中文音色，没有多说话人和多角色音色映射；
-- 不做口型同步；
-- 超长配音目前是加速后裁剪，尚无自动缩写并重新合成循环；
-- 外部下载、LLM 和 TTS 尚未实现统一重试及熔断；
-- 任务状态存在本地 JSON，尚无数据库；
-- 只适合单机 MVP，不适合多实例生产部署；
-- PDF 采用固定版面覆盖策略；扫描件、复杂多栏和彩色纹理背景暂不保证自动排版质量；
+- 视频翻译已接可选 pyannote 说话人分离和 speaker→voice 映射，但模型权重下载、
+  Hugging Face 条款授权和长视频音色一致性仍需人工验收；
+- 已支持可选 lip-sync 外部命令模板，但不随项目内置 Wav2Lip/MuseTalk 权重；
+  画面质量取决于你安装的具体模型和参数；
+- 外部下载、LLM 和 TTS 已有重试、超时和指数退避，但还没有生产级熔断/限流中心；
+- 任务 manifest 和产物仍保存在本地文件系统；SQLite 只记录队列和审计事件；
+  多实例生产部署仍应迁移到 Redis/Celery、外部数据库和对象存储；
+- 当前适合单机本地工作台，不是多租户 SaaS 后端；
+- PDF 内置排版采用固定页数覆盖策略；复杂多栏、公式密集、彩色背景和低清晰扫描件
+  建议优先使用 BabelDOC/PDFMathTranslate，并逐页校样；
 - EPUB 会保留包内资源和目录链接，但最终效果仍受阅读器和原书 CSS 影响；
-- 中间文件不会自动清理。
+- 中间文件可通过 `make cleanup-data CLEANUP_DAYS=7 APPLY=true` 清理；默认 dry-run，
+  防止误删仍在使用的任务文件。
 
 ## 17. 内容授权
 

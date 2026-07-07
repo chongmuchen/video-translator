@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from .cleanup import cleanup_intermediates
 from .books.ocr import check_ocr_environment
 from .errors import VideoTranslatorError
 from .manager import JobManager
@@ -55,8 +56,12 @@ def doctor(settings: Settings) -> int:
             selected_asr_package == "mlx_whisper",
         ),
         ("edge_tts", "edge-tts", True),
+        ("pyannote.audio", "pyannote.audio", settings.enable_diarization),
     ):
-        available = importlib.util.find_spec(package) is not None
+        try:
+            available = importlib.util.find_spec(package) is not None
+        except ModuleNotFoundError:
+            available = False
         failed = failed or (required and not available)
         _print_check(
             label,
@@ -168,6 +173,19 @@ def doctor(settings: Settings) -> int:
         failed = failed or not reachable
         _print_check("翻译服务", reachable, detail)
 
+    if settings.enable_diarization:
+        _print_check(
+            "说话人分离 Token",
+            bool(settings.diarization_auth_token),
+            "已配置" if settings.diarization_auth_token else "未配置",
+        )
+    if settings.enable_lip_sync:
+        _print_check(
+            "Lip-sync 命令",
+            bool(settings.lip_sync_command),
+            "已配置" if settings.lip_sync_command else "未配置",
+        )
+
     settings.ensure_directories()
     _print_check("数据目录", True, str(settings.data_dir))
     print()
@@ -203,6 +221,24 @@ def translate_command(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def cleanup_command(args: argparse.Namespace, settings: Settings) -> int:
+    result = cleanup_intermediates(
+        settings,
+        older_than_days=args.days,
+        dry_run=not args.apply,
+    )
+    action = "将清理" if result.dry_run else "已清理"
+    print(
+        f"{action} {len(result.removed)} 个中间文件/目录，"
+        f"约 {result.bytes_reclaimable / 1024 / 1024:.1f} MB。"
+    )
+    for path in result.removed[:200]:
+        print(path)
+    if result.dry_run:
+        print("\n当前是预览模式。确认后使用：video-translator cleanup --apply")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="video-translator",
@@ -215,6 +251,12 @@ def build_parser() -> argparse.ArgumentParser:
         "bootstrap-media",
         help="下载项目本地的 ffmpeg/ffprobe",
     )
+    cleanup = subparsers.add_parser(
+        "cleanup",
+        help="清理过期中间文件（默认只预览）",
+    )
+    cleanup.add_argument("--days", type=float, default=7)
+    cleanup.add_argument("--apply", action="store_true")
 
     translate = subparsers.add_parser(
         "translate",
@@ -250,6 +292,8 @@ def main() -> None:
             return
         if args.command == "translate":
             raise SystemExit(translate_command(args, settings))
+        if args.command == "cleanup":
+            raise SystemExit(cleanup_command(args, settings))
         if args.command == "serve":
             import uvicorn
             from .api import app

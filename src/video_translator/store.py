@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -211,6 +212,36 @@ class JobStore:
             if len(manifests) >= limit:
                 break
         return manifests
+
+    def delete(
+        self,
+        job_id: str,
+        *,
+        delete_outputs: bool = True,
+    ) -> list[Path]:
+        manifest = self.get(job_id)
+        job_dir = self.job_dir(job_id)
+        removed: list[Path] = []
+        if delete_outputs:
+            for value in (
+                manifest.output_path,
+                manifest.dub_audio_path,
+                manifest.subtitle_path,
+            ):
+                if not value:
+                    continue
+                path = Path(value).resolve()
+                try:
+                    path.relative_to(self.settings.outputs_dir.resolve())
+                except ValueError:
+                    continue
+                if path.exists():
+                    path.unlink()
+                    removed.append(path)
+        if job_dir.exists():
+            shutil.rmtree(job_dir)
+            removed.append(job_dir)
+        return removed
 
     def set_stage(
         self,

@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from ..commands import run_command
-from ..errors import PipelineError
+from ..control import mark_canceled, raise_if_canceled
+from ..errors import PipelineCanceled, PipelineError
+from ..metrics import record_step_metric
+from ..pipeline.media import probe_duration
 from ..pipeline.synthesizer import SpeechSynthesizer
 from ..pipeline.translator import SegmentTranslator
 from ..runtime import resolve_media_binaries
@@ -21,6 +24,7 @@ from ..books.pdf import extract_pdf
 from .models import (
     PaperPodcastManifest,
     PaperPodcastStatus,
+    PodcastScriptBackend,
     PodcastScriptLine,
     PodcastStyle,
 )
@@ -65,52 +69,58 @@ class PaperPodcastPipeline:
         manifest.status = PaperPodcastStatus.extracting
         self.store.save(manifest)
         try:
-            blocks, pdf_metadata = extract_pdf(Path(manifest.source_path))
-            lines = [
-                f"# {manifest.title}",
-                "",
-                f"- 来源文件：{Path(manifest.source_path).name}",
-                f"- 页数：{pdf_metadata.get('page_count', '未知')}",
-                "",
-            ]
-            compact_blocks = []
-            for block in blocks:
-                text = _clean_text(block.source_text)
-                if not text:
-                    continue
-                compact_blocks.append(
+            with record_step_metric(manifest, self.store, "extract"):
+                raise_if_canceled(manifest, self.store)
+                blocks, pdf_metadata = extract_pdf(Path(manifest.source_path))
+                lines = [
+                    f"# {manifest.title}",
+                    "",
+                    f"- 来源文件：{Path(manifest.source_path).name}",
+                    f"- 页数：{pdf_metadata.get('page_count', '未知')}",
+                    "",
+                ]
+                compact_blocks = []
+                for block in blocks:
+                    text = _clean_text(block.source_text)
+                    if not text:
+                        continue
+                    compact_blocks.append(
+                        {
+                            "id": block.id,
+                            "page": block.page,
+                            "kind": block.kind,
+                            "text": text,
+                        }
+                    )
+                    page = f"p.{block.page}" if block.page else "p.?"
+                    lines.append(f"## {page} · {block.kind}")
+                    lines.append(text)
+                    lines.append("")
+                raise_if_canceled(manifest, self.store)
+                markdown = "\n".join(lines).strip() + "\n"
+                text_path = self.store.job_dir(manifest.id) / "paper-text.md"
+                text_path.write_text(markdown, encoding="utf-8")
+                blocks_path = self.store.write_json(
+                    manifest,
+                    "paper-blocks.json",
+                    compact_blocks,
+                )
+                manifest.text_path = str(text_path)
+                manifest.metadata.update(
                     {
-                        "id": block.id,
-                        "page": block.page,
-                        "kind": block.kind,
-                        "text": text,
+                        "page_count": pdf_metadata.get("page_count"),
+                        "block_count": len(compact_blocks),
+                        "paper_blocks_path": str(blocks_path),
+                        "text_hash": _sha256_text(markdown),
                     }
                 )
-                page = f"p.{block.page}" if block.page else "p.?"
-                lines.append(f"## {page} · {block.kind}")
-                lines.append(text)
-                lines.append("")
-            markdown = "\n".join(lines).strip() + "\n"
-            text_path = self.store.job_dir(manifest.id) / "paper-text.md"
-            text_path.write_text(markdown, encoding="utf-8")
-            blocks_path = self.store.write_json(
-                manifest,
-                "paper-blocks.json",
-                compact_blocks,
-            )
-            manifest.text_path = str(text_path)
-            manifest.metadata.update(
-                {
-                    "page_count": pdf_metadata.get("page_count"),
-                    "block_count": len(compact_blocks),
-                    "paper_blocks_path": str(blocks_path),
-                    "text_hash": _sha256_text(markdown),
-                }
-            )
-            manifest.status = PaperPodcastStatus.extracted
-            _mark_done(manifest, "extract")
-            manifest.error = None
-            return self.store.save(manifest)
+                manifest.status = PaperPodcastStatus.extracted
+                _mark_done(manifest, "extract")
+                manifest.error = None
+                return self.store.save(manifest)
+        except PipelineCanceled:
+            mark_canceled(manifest, self.store)
+            raise
         except Exception as exc:
             self.store.fail(manifest, exc)
             raise
@@ -137,6 +147,8 @@ class PaperPodcastPipeline:
         style: PodcastStyle,
         duration_minutes: int,
         glossary: dict[str, str],
+        script_backend: PodcastScriptBackend = "builtin",
+        script_compare_models: list[str] | None = None,
         text_hash: str,
     ) -> str:
         payload = json.dumps(
@@ -151,6 +163,10 @@ class PaperPodcastPipeline:
                 ),
                 "target": target_language,
                 "style": style,
+                "script_backend": script_backend,
+                "script_compare_models": _unique_models(
+                    script_compare_models or []
+                ),
                 "duration": duration_minutes,
                 "glossary": glossary,
                 "text_hash": text_hash,
@@ -169,12 +185,17 @@ class PaperPodcastPipeline:
         style: PodcastStyle,
         duration_minutes: int,
         glossary: dict[str, str],
+        script_backend: PodcastScriptBackend = "builtin",
+        script_compare_models: list[str] | None = None,
     ) -> PaperPodcastManifest:
         paper = self._read_paper_text(manifest)
+        comparison_models = _unique_models(script_compare_models or [])
         key = self._script_key(
             manifest,
             target_language=target_language,
             style=style,
+            script_backend=script_backend,
+            script_compare_models=comparison_models,
             duration_minutes=duration_minutes,
             glossary=glossary,
             text_hash=paper.text_hash,
@@ -194,6 +215,7 @@ class PaperPodcastPipeline:
         manifest.duration_minutes = duration_minutes
         self.store.save(manifest)
         try:
+            raise_if_canceled(manifest, self.store)
             if self.settings.translator_provider == "passthrough":
                 script = _fallback_script(
                     manifest.title,
@@ -208,58 +230,93 @@ class PaperPodcastPipeline:
                     target_language=target_language,
                     glossary=glossary,
                 )
-                script = self._build_script(
-                    manifest.title,
-                    paper.markdown,
-                    notes,
-                    target_language=target_language,
-                    style=style,
-                    duration_minutes=duration_minutes,
-                    glossary=glossary,
-                )
-            raw_script_path = self.store.write_json(
-                manifest,
-                "podcast-script-raw.json",
-                script,
-            )
-            repaired = False
-            try:
-                validated = _validate_script(script)
-            except PipelineError as original:
-                if self.settings.translator_provider == "passthrough":
-                    raise
-                self.logger.warning(
-                    "论文播客脚本格式不完整，尝试自动修复：%s",
-                    original,
-                )
-                repaired_script = self._repair_script(
-                    manifest.title,
-                    script,
-                    notes,
-                    target_language=target_language,
-                    style=style,
-                    duration_minutes=duration_minutes,
-                )
-                repaired_path = self.store.write_json(
-                    manifest,
-                    "podcast-script-repaired.json",
-                    repaired_script,
-                )
-                try:
-                    validated = _validate_script(repaired_script)
-                except PipelineError:
-                    validated = _script_from_notes(
+                raise_if_canceled(manifest, self.store)
+                if comparison_models:
+                    selected = self._build_script_comparison(
+                        manifest,
+                        paper.markdown,
+                        notes,
+                        target_language=target_language,
+                        style=style,
+                        script_backend=script_backend,
+                        duration_minutes=duration_minutes,
+                        glossary=glossary,
+                        model_names=comparison_models,
+                    )
+                    script = selected["raw_script"]
+                    validated = selected["validated"]
+                    quality = selected["quality"]
+                    raw_script_path = Path(selected["raw_script_path"])
+                    repaired = bool(selected["repaired"])
+                    manifest.metadata["script_comparison_path"] = selected[
+                        "comparison_path"
+                    ]
+                    manifest.metadata["script_selected_model"] = selected[
+                        "model"
+                    ]
+                    manifest.metadata["script_compare_models"] = selected[
+                        "models"
+                    ]
+                else:
+                    script = self._build_script(
                         manifest.title,
+                        paper.markdown,
+                        notes,
+                        target_language=target_language,
+                        style=style,
+                        script_backend=script_backend,
+                        duration_minutes=duration_minutes,
+                        glossary=glossary,
+                    )
+                    raise_if_canceled(manifest, self.store)
+                    raw_script_path = self.store.write_json(
+                        manifest,
+                        "podcast-script-raw.json",
+                        script,
+                    )
+                    validated, repaired, repaired_path = (
+                        self._validate_or_repair_script(
+                            manifest,
+                            script,
+                            notes,
+                            target_language=target_language,
+                            style=style,
+                            duration_minutes=duration_minutes,
+                            repair_filename="podcast-script-repaired.json",
+                        )
+                    )
+                    if repaired_path:
+                        manifest.metadata["script_repaired_path"] = str(
+                            repaired_path
+                        )
+                    quality = self._score_script(validated, notes)
+            if self.settings.translator_provider == "passthrough":
+                raw_script_path = self.store.write_json(
+                    manifest,
+                    "podcast-script-raw.json",
+                    script,
+                )
+                validated, repaired, repaired_path = (
+                    self._validate_or_repair_script(
+                        manifest,
+                        script,
                         notes,
                         target_language=target_language,
                         style=style,
                         duration_minutes=duration_minutes,
+                        repair_filename="podcast-script-repaired.json",
                     )
-                    manifest.metadata["script_fallback_reason"] = (
-                        "模型没有生成可朗读台词，已根据阅读笔记生成兜底讲解稿。"
+                )
+                if repaired_path:
+                    manifest.metadata["script_repaired_path"] = str(
+                        repaired_path
                     )
-                manifest.metadata["script_repaired_path"] = str(repaired_path)
-                repaired = True
+                quality = self._score_script(validated, notes)
+            quality_path = self.store.write_json(
+                manifest,
+                "script-quality.json",
+                quality,
+            )
             notes_path = self.store.write_json(
                 manifest,
                 "paper-notes.json",
@@ -286,12 +343,18 @@ class PaperPodcastPipeline:
                     "prompt_version": PAPER_PODCAST_PROMPT_VERSION,
                     "raw_script_path": str(raw_script_path),
                     "script_repaired": repaired,
+                    "script_backend": script_backend,
+                    "script_quality_path": str(quality_path),
+                    "script_quality_score": quality["score"],
                 }
             )
             manifest.status = PaperPodcastStatus.scripted
             _mark_done(manifest, "script")
             manifest.error = None
             return self.store.save(manifest)
+        except PipelineCanceled:
+            mark_canceled(manifest, self.store)
+            raise
         except Exception as exc:
             self.store.fail(manifest, exc)
             raise
@@ -342,10 +405,12 @@ class PaperPodcastPipeline:
         *,
         target_language: str,
         style: PodcastStyle,
+        script_backend: PodcastScriptBackend,
         duration_minutes: int,
         glossary: dict[str, str],
+        settings: Settings | None = None,
     ) -> dict[str, Any]:
-        translator = SegmentTranslator(self.settings, self.logger)
+        translator = SegmentTranslator(settings or self.settings, self.logger)
         source_brief = markdown[:18000]
         style_instruction = (
             "双人深度讲解播客。主持人A负责搭结构、追问和转场；"
@@ -355,6 +420,21 @@ class PaperPodcastPipeline:
             else "单人中文讲解稿。结构清晰，像一位老师在讲论文，"
             "语言准确、口语化但不油腻。"
         )
+        backend_instruction = {
+            "builtin": (
+                "结构采用：问题引入、论文贡献、方法拆解、实验与局限、"
+                "实践启发。"
+            ),
+            "notebooklm": (
+                "模仿高质量双主持人论文导读：开场解释为什么重要，"
+                "持续用追问推动解释，每 2～3 分钟做一次小结，"
+                "把公式和实验翻译成听众能跟上的例子。"
+            ),
+            "podcastfy": (
+                "采用音频博客编排：hook、背景、核心机制、证据、"
+                "反方观点、takeaway；转场自然，适合直接发布。"
+            ),
+        }[script_backend]
         target_lines = max(8, min(90, duration_minutes * 6))
         system_prompt = (
             "你是顶级中文科技播客编导和论文讲解者。"
@@ -372,6 +452,7 @@ class PaperPodcastPipeline:
             f"论文标题：{title}\n"
             f"目标语言：{target_language}\n"
             f"风格：{style_instruction}\n"
+            f"脚本编排策略：{backend_instruction}\n"
             f"期望时长：约 {duration_minutes} 分钟\n"
             f"建议台词数量：约 {target_lines} 条\n"
             f"术语表：{json.dumps(glossary, ensure_ascii=False)}\n\n"
@@ -385,6 +466,178 @@ class PaperPodcastPipeline:
             user_prompt=user_prompt,
         )
 
+    def _build_script_comparison(
+        self,
+        manifest: PaperPodcastManifest,
+        markdown: str,
+        notes: list[dict[str, Any]],
+        *,
+        target_language: str,
+        style: PodcastStyle,
+        script_backend: PodcastScriptBackend,
+        duration_minutes: int,
+        glossary: dict[str, str],
+        model_names: list[str],
+    ) -> dict[str, Any]:
+        models = _comparison_models(self.settings, model_names)
+        candidates: list[dict[str, Any]] = []
+        for index, model_name in enumerate(models, start=1):
+            raise_if_canceled(manifest, self.store)
+            candidate_settings = _settings_for_script_model(
+                self.settings,
+                model_name,
+            )
+            self.logger.info(
+                "生成论文播客候选脚本 %s/%s：%s",
+                index,
+                len(models),
+                model_name,
+            )
+            raw_script = self._build_script(
+                manifest.title,
+                markdown,
+                notes,
+                target_language=target_language,
+                style=style,
+                script_backend=script_backend,
+                duration_minutes=duration_minutes,
+                glossary=glossary,
+                settings=candidate_settings,
+            )
+            prefix = f"script-candidate-{index:02d}-{_safe_filename(model_name)}"
+            raw_path = self.store.write_json(
+                manifest,
+                f"{prefix}-raw.json",
+                raw_script,
+            )
+            validated, repaired, repaired_path = self._validate_or_repair_script(
+                manifest,
+                raw_script,
+                notes,
+                target_language=target_language,
+                style=style,
+                duration_minutes=duration_minutes,
+                repair_filename=f"{prefix}-repaired.json",
+                settings=candidate_settings,
+            )
+            quality = self._score_script(validated, notes)
+            script_path = self.store.write_json(
+                manifest,
+                f"{prefix}.json",
+                validated,
+            )
+            quality_path = self.store.write_json(
+                manifest,
+                f"{prefix}-quality.json",
+                quality,
+            )
+            markdown_path = self.store.job_dir(manifest.id) / f"{prefix}.md"
+            markdown_path.write_text(
+                _script_to_markdown(validated),
+                encoding="utf-8",
+            )
+            candidates.append(
+                {
+                    "model": model_name,
+                    "raw_script": raw_script,
+                    "raw_script_path": str(raw_path),
+                    "validated": validated,
+                    "script_path": str(script_path),
+                    "markdown_path": str(markdown_path),
+                    "quality": quality,
+                    "quality_path": str(quality_path),
+                    "repaired": repaired,
+                    "repaired_path": str(repaired_path)
+                    if repaired_path
+                    else None,
+                }
+            )
+        if not candidates:
+            raise PipelineError("没有可用于对比的论文播客脚本候选模型。")
+        selected = max(
+            candidates,
+            key=lambda item: (
+                float(item["quality"].get("score", 0)),
+                int(item["quality"].get("line_count", 0)),
+            ),
+        )
+        report = {
+            "selected_model": selected["model"],
+            "selection_rule": "按脚本质量评分最高选择；同分时优先台词更多的候选。",
+            "candidates": [
+                {
+                    "model": item["model"],
+                    "score": item["quality"].get("score"),
+                    "line_count": item["quality"].get("line_count"),
+                    "warnings": item["quality"].get("warnings", []),
+                    "script_path": item["script_path"],
+                    "markdown_path": item["markdown_path"],
+                    "quality_path": item["quality_path"],
+                    "repaired": item["repaired"],
+                }
+                for item in candidates
+            ],
+        }
+        comparison_path = self.store.write_json(
+            manifest,
+            "script-comparison.json",
+            report,
+        )
+        selected["comparison_path"] = str(comparison_path)
+        selected["models"] = models
+        return selected
+
+    def _validate_or_repair_script(
+        self,
+        manifest: PaperPodcastManifest,
+        script: dict[str, Any],
+        notes: list[dict[str, Any]],
+        *,
+        target_language: str,
+        style: PodcastStyle,
+        duration_minutes: int,
+        repair_filename: str,
+        settings: Settings | None = None,
+    ) -> tuple[dict[str, Any], bool, Path | None]:
+        selected_settings = settings or self.settings
+        try:
+            return _validate_script(script), False, None
+        except PipelineError as original:
+            if selected_settings.translator_provider == "passthrough":
+                raise
+            self.logger.warning(
+                "论文播客脚本格式不完整，尝试自动修复：%s",
+                original,
+            )
+            repaired_script = self._repair_script(
+                manifest.title,
+                script,
+                notes,
+                target_language=target_language,
+                style=style,
+                duration_minutes=duration_minutes,
+                settings=selected_settings,
+            )
+            repaired_path = self.store.write_json(
+                manifest,
+                repair_filename,
+                repaired_script,
+            )
+            try:
+                validated = _validate_script(repaired_script)
+            except PipelineError:
+                validated = _script_from_notes(
+                    manifest.title,
+                    notes,
+                    target_language=target_language,
+                    style=style,
+                    duration_minutes=duration_minutes,
+                )
+                manifest.metadata["script_fallback_reason"] = (
+                    "模型没有生成可朗读台词，已根据阅读笔记生成兜底讲解稿。"
+                )
+            return validated, True, repaired_path
+
     def _repair_script(
         self,
         title: str,
@@ -394,8 +647,9 @@ class PaperPodcastPipeline:
         target_language: str,
         style: PodcastStyle,
         duration_minutes: int,
+        settings: Settings | None = None,
     ) -> dict[str, Any]:
-        translator = SegmentTranslator(self.settings, self.logger)
+        translator = SegmentTranslator(settings or self.settings, self.logger)
         speaker_rule = (
             "双人模式：speaker 只能在“主持人A”和“嘉宾B”之间交替。"
             if style == "deep_dive"
@@ -429,6 +683,62 @@ class PaperPodcastPipeline:
             user_prompt=user_prompt,
         )
 
+    def _score_script(
+        self,
+        script: dict[str, Any],
+        notes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        lines = script.get("lines") or []
+        line_count = len(lines)
+        lengths = [len(item.get("text", "")) for item in lines]
+        avg_length = sum(lengths) / line_count if line_count else 0
+        speakers = [item.get("speaker", "") for item in lines]
+        alternations = sum(
+            1
+            for left, right in zip(speakers, speakers[1:])
+            if left and right and left != right
+        )
+        note_terms = {
+            str(term.get("term", "")).lower()
+            for note in notes
+            for term in _dict_list(note.get("terms"))
+            if term.get("term")
+        }
+        script_text = "\n".join(item.get("text", "") for item in lines).lower()
+        covered_terms = sum(1 for term in note_terms if term in script_text)
+        warnings: list[str] = []
+        if line_count < 8:
+            warnings.append("台词数量偏少，可能不像完整讲解。")
+        if avg_length > 130:
+            warnings.append("平均单句偏长，TTS 可能显得吃力。")
+        if speakers and alternations / max(1, line_count - 1) < 0.35:
+            warnings.append("双人对话交替不足，可能更像独白。")
+        risky_markers = ["显然", "必然", "证明了", "完全解决"]
+        if any(marker in script_text for marker in risky_markers):
+            warnings.append("出现强断言词，建议人工核查事实表达。")
+        score = 100
+        score -= max(0, 8 - line_count) * 4
+        score -= max(0, avg_length - 120) * 0.25
+        score -= max(0, 0.45 - alternations / max(1, line_count - 1)) * 30
+        if note_terms:
+            score += min(10, covered_terms / max(1, len(note_terms)) * 10)
+        score -= len(warnings) * 6
+        return {
+            "score": round(max(0, min(100, score)), 1),
+            "line_count": line_count,
+            "avg_line_characters": round(avg_length, 1),
+            "speaker_alternation_ratio": round(
+                alternations / max(1, line_count - 1),
+                3,
+            ),
+            "covered_terms": covered_terms,
+            "known_terms": len(note_terms),
+            "warnings": warnings,
+            "fact_check": (
+                "启发式检查完成：仍建议对论文结论、实验数字和专名做人工复核。"
+            ),
+        }
+
     def synthesize(
         self,
         manifest: PaperPodcastManifest,
@@ -436,6 +746,7 @@ class PaperPodcastPipeline:
         voice_a: str,
         voice_b: str,
         silence_ms: int,
+        make_video: bool = False,
     ) -> PaperPodcastManifest:
         if not manifest.script_json_path:
             raise PipelineError("尚未生成论文播客脚本。")
@@ -445,68 +756,93 @@ class PaperPodcastPipeline:
         manifest.status = PaperPodcastStatus.synthesizing
         self.store.save(manifest)
         try:
-            script = json.loads(script_path.read_text(encoding="utf-8"))
-            lines = [
-                PodcastScriptLine.model_validate(item)
-                for item in script.get("lines", [])
-            ]
-            if not lines:
-                raise PipelineError("论文播客脚本没有可朗读台词。")
-            tts_dir = self.store.job_dir(manifest.id) / "tts"
-            raw_dir = tts_dir / "raw"
-            normalized_dir = tts_dir / "normalized"
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            normalized_dir.mkdir(parents=True, exist_ok=True)
-            media = resolve_media_binaries(self.settings, allow_download=True)
-            normalized_clips: list[Path] = []
-            for index, line in enumerate(_expand_lines(lines), start=1):
-                voice = _voice_for(line.speaker, voice_a=voice_a, voice_b=voice_b)
-                line_settings = self.settings.model_copy(
-                    update={"tts_voice": voice}
+            with record_step_metric(manifest, self.store, "synthesize"):
+                script = json.loads(script_path.read_text(encoding="utf-8"))
+                lines = [
+                    PodcastScriptLine.model_validate(item)
+                    for item in script.get("lines", [])
+                ]
+                if not lines:
+                    raise PipelineError("论文播客脚本没有可朗读台词。")
+                tts_dir = self.store.job_dir(manifest.id) / "tts"
+                raw_dir = tts_dir / "raw"
+                normalized_dir = tts_dir / "normalized"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                normalized_dir.mkdir(parents=True, exist_ok=True)
+                media = resolve_media_binaries(self.settings, allow_download=True)
+                normalized_clips: list[Path] = []
+                expanded_lines = _expand_lines(lines)
+                for index, line in enumerate(expanded_lines, start=1):
+                    raise_if_canceled(manifest, self.store)
+                    voice = _voice_for(
+                        line.speaker,
+                        voice_a=voice_a,
+                        voice_b=voice_b,
+                    )
+                    line_settings = self.settings.model_copy(
+                        update={"tts_voice": voice}
+                    )
+                    synthesizer = SpeechSynthesizer(
+                        line_settings,
+                        self.logger,
+                    )
+                    raw_extension = (
+                        ".wav"
+                        if line_settings.tts_provider == "cosyvoice"
+                        else ".mp3"
+                    )
+                    raw_path = raw_dir / f"{index:04d}{raw_extension}"
+                    self.logger.info(
+                        "生成论文播客配音 %s/%s：%s",
+                        index,
+                        len(expanded_lines),
+                        line.text[:60],
+                    )
+                    synthesizer.synthesize(line.text, raw_path)
+                    normalized = normalized_dir / f"{index:04d}.wav"
+                    _normalize_clip(raw_path, normalized, media.ffmpeg)
+                    normalized_clips.append(normalized)
+                output = self.store.outputs_dir / (
+                    f"{manifest.title}-paper-podcast-"
+                    f"{manifest.style}-{manifest.id[:8]}.mp3"
                 )
-                synthesizer = SpeechSynthesizer(
-                    line_settings,
-                    self.logger,
+                _concat_wav_to_mp3(
+                    normalized_clips,
+                    output,
+                    ffmpeg=media.ffmpeg,
+                    silence_ms=silence_ms,
                 )
-                raw_extension = (
-                    ".wav"
-                    if line_settings.tts_provider == "cosyvoice"
-                    else ".mp3"
+                manifest.audio_path = str(output)
+                video_path = None
+                if make_video:
+                    video_path = self.store.outputs_dir / (
+                        f"{manifest.title}-paper-podcast-"
+                        f"{manifest.style}-{manifest.id[:8]}.mp4"
+                    )
+                    _make_explainer_video(
+                        Path(manifest.source_path),
+                        output,
+                        video_path,
+                        job_dir=self.store.job_dir(manifest.id),
+                        media=media,
+                    )
+                    manifest.video_path = str(video_path)
+                manifest.metadata.update(
+                    {
+                        "voice_a": voice_a,
+                        "voice_b": voice_b,
+                        "silence_ms": silence_ms,
+                        "audio_clip_count": len(normalized_clips),
+                        "video_enabled": make_video,
+                    }
                 )
-                raw_path = raw_dir / f"{index:04d}{raw_extension}"
-                self.logger.info(
-                    "生成论文播客配音 %s/%s：%s",
-                    index,
-                    len(lines),
-                    line.text[:60],
-                )
-                synthesizer.synthesize(line.text, raw_path)
-                normalized = normalized_dir / f"{index:04d}.wav"
-                _normalize_clip(raw_path, normalized, media.ffmpeg)
-                normalized_clips.append(normalized)
-            output = self.store.outputs_dir / (
-                f"{manifest.title}-paper-podcast-"
-                f"{manifest.style}-{manifest.id[:8]}.mp3"
-            )
-            _concat_wav_to_mp3(
-                normalized_clips,
-                output,
-                ffmpeg=media.ffmpeg,
-                silence_ms=silence_ms,
-            )
-            manifest.audio_path = str(output)
-            manifest.metadata.update(
-                {
-                    "voice_a": voice_a,
-                    "voice_b": voice_b,
-                    "silence_ms": silence_ms,
-                    "audio_clip_count": len(normalized_clips),
-                }
-            )
-            manifest.status = PaperPodcastStatus.completed
-            _mark_done(manifest, "synthesize")
-            manifest.error = None
-            return self.store.save(manifest)
+                manifest.status = PaperPodcastStatus.completed
+                _mark_done(manifest, "synthesize")
+                manifest.error = None
+                return self.store.save(manifest)
+        except PipelineCanceled:
+            mark_canceled(manifest, self.store)
+            raise
         except Exception as exc:
             self.store.fail(manifest, exc)
             raise
@@ -522,6 +858,9 @@ class PaperPodcastPipeline:
         voice_a: str,
         voice_b: str,
         silence_ms: int,
+        make_video: bool = False,
+        script_backend: PodcastScriptBackend = "builtin",
+        script_compare_models: list[str] | None = None,
     ) -> PaperPodcastManifest:
         manifest = self.import_paper(
             source,
@@ -534,6 +873,8 @@ class PaperPodcastPipeline:
             current,
             target_language=target_language,
             style=style,
+            script_backend=script_backend,
+            script_compare_models=script_compare_models,
             duration_minutes=duration_minutes,
             glossary=glossary,
         )
@@ -543,6 +884,7 @@ class PaperPodcastPipeline:
             voice_a=voice_a,
             voice_b=voice_b,
             silence_ms=silence_ms,
+            make_video=make_video,
         )
 
 
@@ -560,6 +902,44 @@ def _clean_text(text: str) -> str:
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _unique_models(models: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for model in models:
+        cleaned = str(model or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result[:5]
+
+
+def _current_script_model(settings: Settings) -> str:
+    if settings.translator_provider == "codex_cli":
+        return (
+            settings.translator_codex_model
+            or f"strategy:{settings.translator_codex_strategy}"
+        )
+    return settings.translator_model or "default"
+
+
+def _comparison_models(settings: Settings, models: list[str]) -> list[str]:
+    return _unique_models([_current_script_model(settings), *models])
+
+
+def _settings_for_script_model(settings: Settings, model: str) -> Settings:
+    if model.startswith("strategy:") or model == "default":
+        return settings
+    if settings.translator_provider == "codex_cli":
+        return settings.model_copy(update={"translator_codex_model": model})
+    return settings.model_copy(update={"translator_model": model})
+
+
+def _safe_filename(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-")
+    return (safe or "model")[:80]
 
 
 def _chunks(text: str, *, max_chars: int, max_chunks: int) -> list[str]:
@@ -901,6 +1281,94 @@ def _voice_for(speaker: str, *, voice_a: str, voice_b: str) -> str:
     if any(marker in normalized for marker in ("b", "乙", "嘉宾", "guest")):
         return voice_b
     return voice_a
+
+
+def _render_pdf_slides(
+    source: Path,
+    slide_dir: Path,
+    *,
+    max_slides: int = 10,
+) -> list[Path]:
+    try:
+        import pymupdf
+    except ImportError as exc:
+        raise PipelineError("论文讲解视频需要 PyMuPDF。") from exc
+
+    slide_dir.mkdir(parents=True, exist_ok=True)
+    doc = pymupdf.open(source)
+    if doc.page_count == 0:
+        raise PipelineError("PDF 没有可渲染页面。")
+    scored: list[tuple[int, int]] = []
+    for page_index in range(doc.page_count):
+        page = doc.load_page(page_index)
+        image_score = len(page.get_images(full=True)) * 3
+        drawing_score = len(page.get_drawings())
+        text_score = min(5, len(page.get_text("text").strip()) // 600)
+        scored.append((image_score + drawing_score + text_score, page_index))
+    selected = {0}
+    selected.update(
+        page_index
+        for _, page_index in sorted(scored, reverse=True)[: max_slides - 1]
+    )
+    slides: list[Path] = []
+    matrix = pymupdf.Matrix(1.6, 1.6)
+    for page_index in sorted(selected)[:max_slides]:
+        page = doc.load_page(page_index)
+        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+        path = slide_dir / f"slide-{page_index + 1:03d}.png"
+        pixmap.save(path)
+        slides.append(path)
+    doc.close()
+    return slides
+
+
+def _make_explainer_video(
+    source_pdf: Path,
+    audio: Path,
+    output: Path,
+    *,
+    job_dir: Path,
+    media,
+) -> None:
+    slides = _render_pdf_slides(source_pdf, job_dir / "video-slides")
+    if not slides:
+        raise PipelineError("没有生成论文讲解视频幻灯片。")
+    duration = max(1.0, probe_duration(audio, media))
+    slide_duration = max(2.0, duration / len(slides))
+    concat = job_dir / "video-slides.txt"
+    lines: list[str] = []
+    for slide in slides:
+        lines.append(f"file '{slide}'")
+        lines.append(f"duration {slide_duration:.3f}")
+    lines.append(f"file '{slides[-1]}'")
+    concat.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    run_command(
+        [
+            media.ffmpeg,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat,
+            "-i",
+            audio,
+            "-shortest",
+            "-vf",
+            "scale=1280:-2,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            output,
+        ]
+    )
 
 
 def _normalize_clip(input_path: Path, output_path: Path, ffmpeg: str) -> None:

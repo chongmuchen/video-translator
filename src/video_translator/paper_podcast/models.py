@@ -12,6 +12,7 @@ from ..models import RuntimeSettingsUpdate, utc_now
 
 
 PodcastStyle = Literal["deep_dive", "narration"]
+PodcastScriptBackend = Literal["builtin", "notebooklm", "podcastfy"]
 
 
 class PaperPodcastStatus(str, Enum):
@@ -22,6 +23,7 @@ class PaperPodcastStatus(str, Enum):
     scripted = "scripted"
     synthesizing = "synthesizing"
     completed = "completed"
+    canceled = "canceled"
     failed = "failed"
 
 
@@ -51,6 +53,7 @@ class PaperPodcastManifest(BaseModel):
     script_json_path: str | None = None
     script_markdown_path: str | None = None
     audio_path: str | None = None
+    video_path: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     completed_steps: list[str] = Field(default_factory=list)
@@ -64,11 +67,14 @@ class PaperPodcastManifest(BaseModel):
 class PaperPodcastRequest(BaseModel):
     target_language: str = "简体中文"
     style: PodcastStyle = "deep_dive"
+    script_backend: PodcastScriptBackend = "builtin"
+    script_compare_models: list[str] = Field(default_factory=list, max_length=5)
     duration_minutes: int = Field(default=8, ge=2, le=60)
     glossary: dict[str, str] = Field(default_factory=dict)
     voice_a: str = "zh-CN-XiaoxiaoNeural"
     voice_b: str = "zh-CN-YunxiNeural"
     silence_ms: int = Field(default=220, ge=0, le=2000)
+    make_video: bool = False
     settings: RuntimeSettingsUpdate = Field(
         default_factory=RuntimeSettingsUpdate
     )

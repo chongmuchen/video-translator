@@ -11,6 +11,7 @@ from video_translator.pipeline.transcriber import (
     merge_segments,
     mlx_model_name,
 )
+from video_translator.pipeline.diarization import SpeakerTurn, assign_speakers
 from video_translator.settings import Settings
 
 
@@ -112,3 +113,21 @@ def test_mlx_transcriber_produces_standard_segments(
     assert captured["word_timestamps"] is True
     assert metadata["asr_backend"] == "mlx_whisper"
     assert metadata["asr_device"] == "metal"
+
+
+def test_assign_speakers_by_maximum_overlap() -> None:
+    segments = [
+        Segment(index=0, start=0.0, end=2.0, source_text="hello"),
+        Segment(index=1, start=2.0, end=4.0, source_text="world"),
+    ]
+    counts = assign_speakers(
+        segments,
+        [
+            SpeakerTurn(start=0.0, end=2.5, speaker="SPEAKER_00"),
+            SpeakerTurn(start=2.5, end=4.0, speaker="SPEAKER_01"),
+        ],
+    )
+
+    assert segments[0].speaker == "SPEAKER_00"
+    assert segments[1].speaker == "SPEAKER_01"
+    assert counts == {"SPEAKER_00": 1, "SPEAKER_01": 1}

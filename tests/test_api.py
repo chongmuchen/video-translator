@@ -309,3 +309,219 @@ def test_segments_preview_is_limited(tmp_path: Path) -> None:
         assert response.status_code == 200
         assert response.json()["total"] == 3
         assert len(response.json()["items"]) == 2
+
+
+def test_cancel_job_endpoint_marks_running_job(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    manifest = manager.store.create(
+        "https://youtu.be/example",
+        PipelineOptions(),
+    )
+
+    monkeypatch.setattr(manager, "is_running", lambda job_id: True)
+    monkeypatch.setattr(manager, "cancel", lambda job_id: manager.store.get(job_id))
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/jobs/{manifest.id}/cancel")
+
+    assert response.status_code == 202
+    assert response.json()["id"] == manifest.id
+
+
+def test_authorization_can_be_required_for_job_creation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(
+        Settings(
+            data_dir=tmp_path / "data",
+            require_content_authorization=True,
+        )
+    )
+    manager = app.state.manager
+    monkeypatch.setattr(
+        manager,
+        "submit_step",
+        lambda job_id, step, *, force=False, settings=None: manager.store.get(job_id),
+    )
+
+    with TestClient(app) as client:
+        blocked = client.post(
+            "/api/jobs/staged",
+            json={"url": "https://www.youtube.com/watch?v=example"},
+        )
+        allowed = client.post(
+            "/api/jobs/staged",
+            json={
+                "url": "https://www.youtube.com/watch?v=example",
+                "authorization": {
+                    "authorized": True,
+                    "rights_basis": "own",
+                    "notes": "test fixture",
+                },
+            },
+        )
+
+    assert blocked.status_code == 403
+    assert allowed.status_code == 202
+    restored = manager.store.get(allowed.json()["id"])
+    assert restored.metadata["content_authorization"]["authorized"] is True
+
+
+def test_delete_job_removes_directory_and_records_audit(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    manifest = manager.store.create(
+        "https://youtu.be/example",
+        PipelineOptions(),
+    )
+    job_dir = manager.store.job_dir(manifest.id)
+    assert job_dir.is_dir()
+
+    with TestClient(app) as client:
+        response = client.delete(
+            f"/api/jobs/{manifest.id}",
+            headers={"x-actor": "tester"},
+        )
+        events = client.get(
+            "/api/audit/events",
+            params={"resource_type": "job", "resource_id": manifest.id},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+    assert not job_dir.exists()
+    assert events.status_code == 200
+    assert events.json()[0]["action"] == "delete"
+    assert events.json()[0]["actor"] == "tester"
+
+
+def test_segment_rerun_endpoint_submits_selected_segments(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    manifest = manager.store.create(
+        "https://youtu.be/example",
+        PipelineOptions(),
+    )
+    manager.store.write_segments(
+        manifest,
+        [
+            {
+                "index": 7,
+                "start": 0.0,
+                "end": 1.0,
+                "source_text": "hello",
+                "translated_text": "你好",
+            }
+        ],
+    )
+    submitted = {}
+
+    def fake_submit_segments(job_id, *, segment_ids, mode, settings=None):
+        submitted.update(
+            {
+                "job_id": job_id,
+                "segment_ids": segment_ids,
+                "mode": mode,
+                "settings": settings,
+            }
+        )
+        return manager.store.get(job_id)
+
+    monkeypatch.setattr(manager, "submit_segments", fake_submit_segments)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/jobs/{manifest.id}/segments/rerun",
+            json={"segment_ids": [7], "mode": "synthesize"},
+        )
+
+    assert response.status_code == 202
+    assert submitted["segment_ids"] == [7]
+    assert submitted["mode"] == "synthesize"
+
+
+def test_book_library_metadata_can_be_updated(tmp_path: Path) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    book_store = app.state.book_manager.store
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"%PDF-1.4 placeholder")
+    manifest = book_store.create(
+        source,
+        output_mode="translated_only",
+        title="Paper",
+    )
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/books/{manifest.id}/library",
+            json={
+                "tags": ["attention", "  transformer  "],
+                "favorite": True,
+                "summary": "Important paper",
+                "glossary": {"attention": "注意力"},
+                "reading_status": "reading",
+                "priority": 80,
+                "quality_score": 92.5,
+            },
+        )
+
+    assert response.status_code == 200
+    library = response.json()["library"]
+    assert library["favorite"] is True
+    assert library["tags"] == ["attention", "transformer"]
+    assert library["glossary"]["attention"] == "注意力"
+    assert library["reading_status"] == "reading"
+    assert library["priority"] == 80
+    assert library["quality_score"] == 92.5
+
+
+def test_book_library_can_filter_and_sort(tmp_path: Path) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    book_store = app.state.book_manager.store
+    source_a = tmp_path / "a.pdf"
+    source_b = tmp_path / "b.pdf"
+    source_a.write_bytes(b"%PDF-1.4 a")
+    source_b.write_bytes(b"%PDF-1.4 b")
+    low = book_store.create(source_a, output_mode="translated_only", title="Low")
+    high = book_store.create(
+        source_b,
+        output_mode="translated_only",
+        title="High",
+    )
+    book_store.update_library(
+        low,
+        tags=["paper"],
+        reading_status="reading",
+        priority=10,
+        quality_score=20,
+    )
+    book_store.update_library(
+        high,
+        tags=["paper", "favorite-topic"],
+        favorite=True,
+        reading_status="reading",
+        priority=90,
+        quality_score=95,
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/books",
+            params={
+                "tag": "paper",
+                "reading_status": "reading",
+                "sort_by": "quality_score",
+                "descending": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["title"] for item in payload] == ["High", "Low"]

@@ -329,6 +329,7 @@ class SegmentTranslator:
         on_batch_completed: (
             Callable[[list[Segment]], None] | None
         ) = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> list[Segment]:
         for segment in segments:
             if segment.asr_unclear:
@@ -340,6 +341,8 @@ class SegmentTranslator:
         ]
         batch_size = max(1, self.settings.translation_batch_size)
         for offset in range(0, len(pending), batch_size):
+            if cancel_check:
+                cancel_check()
             batch = pending[offset : offset + batch_size]
             self.logger.info(
                 "翻译片段 %s–%s / %s",
@@ -354,4 +357,54 @@ class SegmentTranslator:
             )
             if on_batch_completed:
                 on_batch_completed(segments)
+            if cancel_check:
+                cancel_check()
+        return segments
+
+    def shorten_for_tts(
+        self,
+        segments: list[Segment],
+        *,
+        target_language: str,
+        glossary: dict[str, str],
+        reason: str,
+    ) -> list[Segment]:
+        """Rewrite translations so they fit their original time slots."""
+
+        if self.settings.translator_provider == "passthrough":
+            return segments
+        payload = [
+            {
+                "id": segment.index,
+                "seconds": round(segment.duration, 2),
+                "max_zh_chars": segment.max_zh_chars,
+                "source": segment.source_text,
+                "current_translation": segment.translated_text or "",
+            }
+            for segment in segments
+            if not segment.asr_unclear
+        ]
+        if not payload:
+            return segments
+        system_prompt = (
+            "你是中文配音压缩编辑。保持事实、术语、数字和专名不变，"
+            "把已有译文改短到适合 TTS 在时间槽内读完。"
+            "不要新增原文没有的信息；如果原文不清，保留【原音不清，未能可靠识别】。"
+            "只返回 JSON：{\"segments\":[{\"id\":0,\"text\":\"短译文\"}]}。"
+        )
+        user_prompt = (
+            f"目标语言：{target_language}\n"
+            f"术语表：{json.dumps(glossary, ensure_ascii=False)}\n"
+            f"缩写原因：{reason}\n"
+            "需要缩短的片段：\n"
+            f"{json.dumps(payload, ensure_ascii=False)}"
+        )
+        result = self.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        apply_translation_response(
+            [segment for segment in segments if not segment.asr_unclear],
+            json.dumps(result, ensure_ascii=False),
+        )
         return segments

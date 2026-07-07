@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     asr_device: str = "auto"
     asr_compute_type: str = "auto"
     source_language: str | None = None
+    enable_diarization: bool = False
+    diarization_backend: Literal["pyannote"] = "pyannote"
+    diarization_model: str = "pyannote/speaker-diarization-3.1"
+    diarization_auth_token: str | None = None
 
     translator_provider: TranslatorProvider = "openai_compatible"
     translator_base_url: str = DEFAULT_TRANSLATOR_BASE_URL
@@ -82,6 +86,10 @@ class Settings(BaseSettings):
     tts_volume: str = "+0%"
     tts_http_url: str | None = None
     tts_http_api_key: str | None = None
+    speaker_voice_map: str = ""
+    tts_timeout_seconds: float = 180
+    tts_retries: int = 2
+    tts_retry_backoff_seconds: float = 2.0
     cosyvoice_base_url: str = "http://127.0.0.1:50000"
     cosyvoice_mode: Literal[
         "sft",
@@ -101,10 +109,16 @@ class Settings(BaseSettings):
     enable_demucs: bool = False
     dub_sample_rate: int = 24000
     max_tempo_factor: float = 1.8
+    auto_shorten_overlong_tts: bool = True
+    tts_shorten_retries: int = 1
+    enable_lip_sync: bool = False
+    lip_sync_command: str | None = None
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     worker_count: int = 1
+    require_content_authorization: bool = False
+    max_jobs_per_day: int = 0
 
     @model_validator(mode="after")
     def resolve_paths(self) -> "Settings":

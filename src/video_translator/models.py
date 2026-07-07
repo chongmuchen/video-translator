@@ -35,6 +35,7 @@ class JobStatus(str, Enum):
     aligned = "aligned"
     muxing = "muxing"
     completed = "completed"
+    canceled = "canceled"
     failed = "failed"
 
 
@@ -69,9 +70,27 @@ class PipelineOptions(BaseModel):
     glossary: dict[str, str] = Field(default_factory=dict)
 
 
+class ContentAuthorization(BaseModel):
+    authorized: bool = False
+    rights_basis: Literal[
+        "own",
+        "licensed",
+        "public_domain",
+        "fair_use",
+        "permission",
+        "other",
+    ] = "other"
+    notes: str = Field(default="", max_length=2000)
+
+
+class ContentAuthorizationRequest(BaseModel):
+    authorization: ContentAuthorization
+
+
 class JobCreateRequest(BaseModel):
     url: str
     options: PipelineOptions = Field(default_factory=PipelineOptions)
+    authorization: ContentAuthorization | None = None
 
 
 class PipelineOptionsUpdate(BaseModel):
@@ -106,6 +125,10 @@ class RuntimeSettingsUpdate(BaseModel):
         ge=0,
         le=1,
     )
+    enable_diarization: bool | None = None
+    diarization_backend: Literal["pyannote"] | None = None
+    diarization_model: str | None = None
+    diarization_auth_token: str | None = None
 
     translator_provider: TranslatorProvider | None = None
     translator_base_url: str | None = None
@@ -138,6 +161,18 @@ class RuntimeSettingsUpdate(BaseModel):
     tts_volume: str | None = None
     tts_http_url: str | None = None
     tts_http_api_key: str | None = None
+    speaker_voice_map: str | None = None
+    tts_timeout_seconds: float | None = Field(
+        default=None,
+        ge=1,
+        le=3600,
+    )
+    tts_retries: int | None = Field(default=None, ge=0, le=10)
+    tts_retry_backoff_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        le=300,
+    )
     cosyvoice_base_url: str | None = None
     cosyvoice_mode: Literal[
         "sft",
@@ -154,7 +189,11 @@ class RuntimeSettingsUpdate(BaseModel):
 
     dub_sample_rate: int | None = Field(default=None, ge=8000, le=96000)
     max_tempo_factor: float | None = Field(default=None, ge=1.0, le=4.0)
+    auto_shorten_overlong_tts: bool | None = None
+    tts_shorten_retries: int | None = Field(default=None, ge=0, le=3)
     enable_demucs: bool | None = None
+    enable_lip_sync: bool | None = None
+    lip_sync_command: str | None = None
 
 
 class StagedJobCreateRequest(JobCreateRequest):
@@ -176,6 +215,17 @@ class SecretSaveRequest(BaseModel):
 
 class StepRunRequest(BaseModel):
     force: bool = False
+    options: PipelineOptionsUpdate = Field(
+        default_factory=PipelineOptionsUpdate
+    )
+    settings: RuntimeSettingsUpdate = Field(
+        default_factory=RuntimeSettingsUpdate
+    )
+
+
+class SegmentRerunRequest(BaseModel):
+    segment_ids: list[int] = Field(min_length=1, max_length=200)
+    mode: Literal["translate", "synthesize", "both"] = "both"
     options: PipelineOptionsUpdate = Field(
         default_factory=PipelineOptionsUpdate
     )

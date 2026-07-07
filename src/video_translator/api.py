@@ -19,9 +19,19 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
+from .cleanup import cleanup_intermediates
 from .errors import InvalidSourceError, VideoTranslatorError
+from .governance import (
+    AuditLog,
+    assert_authorized,
+    authorization_metadata,
+)
 from .books.manager import BookManager
-from .books.models import BookStep, BookStepRequest
+from .books.models import (
+    BookLibraryUpdateRequest,
+    BookStep,
+    BookStepRequest,
+)
 from .books.ocr import check_ocr_environment
 from .books.pdf import PAPER_OUTPUT_MODES
 from .books.pipeline import BookTranslationPipeline
@@ -29,10 +39,13 @@ from .books.professional_pdf import PROFESSIONAL_PDF_OUTPUT_MODES
 from .manager import JobManager
 from .models import (
     AutomatedJobCreateRequest,
+    ContentAuthorization,
+    ContentAuthorizationRequest,
     JobCreateRequest,
     JobManifest,
     JobStatus,
     SecretSaveRequest,
+    SegmentRerunRequest,
     StagedJobCreateRequest,
     StepRunRequest,
 )
@@ -54,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     book_manager = BookManager(runtime_settings)
     paper_podcast_manager = PaperPodcastManager(runtime_settings)
     secret_store = KeychainSecretStore()
+    audit_log = AuditLog(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -72,6 +86,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.book_manager = book_manager
     app.state.paper_podcast_manager = paper_podcast_manager
     app.state.secret_store = secret_store
+    app.state.audit_log = audit_log
+
+    def actor_from(request: Request) -> str:
+        return (
+            request.headers.get("x-actor")
+            or request.headers.get("x-user")
+            or "local-user"
+        )
+
+    def check_quota(actor: str) -> None:
+        if runtime_settings.max_jobs_per_day <= 0:
+            return
+        used = audit_log.count_today(actor=actor, action="create")
+        if used >= runtime_settings.max_jobs_per_day:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"今日任务配额已用完：{used}/"
+                    f"{runtime_settings.max_jobs_per_day}"
+                ),
+            )
+
+    def apply_authorization(
+        manifest,
+        authorization: ContentAuthorization | None,
+    ) -> None:
+        manifest.metadata.update(authorization_metadata(authorization))
 
     def job_payload(manifest: JobManifest) -> dict:
         payload = manifest.public_dict()
@@ -81,6 +122,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload["manifest_path"] = str(job_dir / "manifest.json")
         payload["log_path"] = str(job_dir / "pipeline.log")
         payload["running"] = manager.is_running(manifest.id)
+        payload["cancel_requested"] = bool(
+            manifest.metadata.get("cancel_requested")
+        )
         payload["next_step"] = next(
             (
                 step.value
@@ -97,6 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "subtitle": manifest.subtitle_path,
             "dub_audio": manifest.dub_audio_path,
             "output": manifest.output_path,
+            "quality_report": manifest.metadata.get("quality_report_path"),
         }.items():
             if value and Path(value).is_file():
                 artifact_paths[key] = str(Path(value))
@@ -127,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
         }
         payload["step_progress"] = job_step_progress(manifest)
+        payload["metrics"] = manifest.metadata.get("metrics", {})
         return payload
 
     def segment_counts(manifest: JobManifest) -> dict[str, int] | None:
@@ -282,10 +328,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/api/secrets/translator-api-key")
-    def save_translator_api_key(request: SecretSaveRequest) -> dict:
+    def save_translator_api_key(
+        payload: SecretSaveRequest,
+        http_request: Request,
+    ) -> dict:
         reference = secret_store.save(
-            request.value,
-            reference=request.reference,
+            payload.value,
+            reference=payload.reference,
+        )
+        audit_log.record(
+            actor=actor_from(http_request),
+            action="save_secret",
+            resource_type="secret",
+            resource_id=reference,
+            details={"kind": "translator-api-key"},
         )
         return {
             "ref": reference,
@@ -293,9 +349,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.delete("/api/secrets/translator-api-key/{reference}")
-    def delete_translator_api_key(reference: str) -> dict:
+    def delete_translator_api_key(
+        reference: str,
+        http_request: Request,
+    ) -> dict:
         secret_store.delete(reference)
+        audit_log.record(
+            actor=actor_from(http_request),
+            action="delete_secret",
+            resource_type="secret",
+            resource_id=reference,
+            details={"kind": "translator-api-key"},
+        )
         return {"deleted": True}
+
+    @app.get("/api/audit/events")
+    def list_audit_events(
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        return audit_log.list(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+
+    @app.get("/api/tasks")
+    def list_tasks(
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        return manager.queue.list(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            status=status,
+            limit=limit,
+        )
 
     @app.get("/api/jobs")
     def list_jobs(limit: int = 100) -> list[dict]:
@@ -319,6 +411,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ocr_pdf": manifest.metadata.get("ocr_source_path"),
             "ocr_text": manifest.metadata.get("ocr_sidecar_path"),
             "ocr_log": manifest.metadata.get("ocr_log_path"),
+            "structured_markdown": manifest.metadata.get(
+                "structured_ocr_markdown_path"
+            ),
+            "structured_json": manifest.metadata.get(
+                "structured_ocr_json_path"
+            ),
         }.items():
             if value and Path(value).is_file():
                 artifact_paths[key] = str(Path(value))
@@ -341,6 +439,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     professional_logs[str(mode)] = str(Path(value))
         payload["professional_pdf_logs"] = professional_logs
         payload["running"] = book_manager.is_running(manifest.id)
+        payload["cancel_requested"] = bool(
+            manifest.metadata.get("cancel_requested")
+        )
         payload["download_ready"] = bool(
             manifest.output_path
             and Path(manifest.output_path).is_file()
@@ -363,6 +464,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload["layout_warning_count"] = len(
             manifest.metadata.get("layout_warnings", [])
         )
+        payload["library"] = manifest.metadata.get("library", {})
+        payload["metrics"] = manifest.metadata.get("metrics", {})
         return payload
 
     def book_step_progress(manifest) -> dict:
@@ -420,11 +523,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "script_json": manifest.script_json_path,
             "script_markdown": manifest.script_markdown_path,
             "audio": manifest.audio_path,
+            "video": manifest.video_path,
+            "script_quality": manifest.metadata.get("script_quality_path"),
+            "script_comparison": manifest.metadata.get(
+                "script_comparison_path"
+            ),
         }.items():
             if value and Path(value).is_file():
                 artifact_paths[key] = str(Path(value))
         payload["artifact_paths"] = artifact_paths
         payload["running"] = paper_podcast_manager.is_running(manifest.id)
+        payload["cancel_requested"] = bool(
+            manifest.metadata.get("cancel_requested")
+        )
         payload["download_ready"] = bool(
             manifest.audio_path and Path(manifest.audio_path).is_file()
         )
@@ -444,6 +555,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload["download_url"] = (
                 f"/api/paper-podcasts/{manifest.id}/download"
             )
+        if manifest.video_path and Path(manifest.video_path).is_file():
+            payload["video_download_url"] = (
+                f"/api/paper-podcasts/{manifest.id}/download?artifact=video"
+            )
         payload["step_progress"] = {
             "extract": {
                 "done": "extract" in manifest.completed_steps,
@@ -454,19 +569,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "done": "script" in manifest.completed_steps,
                 "lines": manifest.metadata.get("script_line_count", 0),
                 "note_chunks": manifest.metadata.get("note_chunk_count", 0),
+                "quality_score": manifest.metadata.get(
+                    "script_quality_score"
+                ),
+                "backend": manifest.metadata.get("script_backend"),
+                "selected_model": manifest.metadata.get(
+                    "script_selected_model"
+                ),
+                "comparison_count": len(
+                    manifest.metadata.get("script_compare_models", [])
+                ),
             },
             "synthesize": {
                 "done": payload["download_ready"],
                 "clips": manifest.metadata.get("audio_clip_count", 0),
             },
         }
+        payload["metrics"] = manifest.metadata.get("metrics", {})
         return payload
 
     @app.get("/api/books")
-    def list_books() -> list[dict]:
+    def list_books(
+        tag: str | None = None,
+        favorite: bool | None = None,
+        reading_status: str | None = None,
+        sort_by: str = "updated_at",
+        descending: bool = True,
+    ) -> list[dict]:
         return [
             book_payload(manifest)
-            for manifest in book_manager.store.list()
+            for manifest in book_manager.store.list(
+                tag=tag,
+                favorite=favorite,
+                reading_status=reading_status,
+                sort_by=sort_by,
+                descending=descending,
+            )
         ]
 
     @app.get("/api/paper-podcasts")
@@ -476,14 +614,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for manifest in paper_podcast_manager.store.list()
         ]
 
+    @app.post("/api/maintenance/cleanup")
+    def cleanup(
+        http_request: Request,
+        dry_run: bool = True,
+        older_than_days: float = 7,
+    ) -> dict:
+        result = cleanup_intermediates(
+            runtime_settings,
+            older_than_days=older_than_days,
+            dry_run=dry_run,
+        )
+        audit_log.record(
+            actor=actor_from(http_request),
+            action="cleanup",
+            resource_type="maintenance",
+            resource_id="local",
+            details=result.model_dump(),
+        )
+        return result.model_dump()
+
     @app.post(
         "/api/paper-podcasts/import",
         status_code=status.HTTP_201_CREATED,
     )
     def import_paper_podcast(
+        http_request: Request,
         file: UploadFile = File(...),
         style: str = Form("deep_dive"),
         duration_minutes: int = Form(8),
+        authorized: bool = Form(False),
+        rights_basis: str = Form("other"),
+        authorization_notes: str = Form(""),
     ) -> dict:
         suffix = Path(file.filename or "").suffix.lower()
         if suffix != ".pdf":
@@ -494,6 +656,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if style not in {"deep_dive", "narration"}:
             raise HTTPException(status_code=400, detail="播客风格无效。")
         safe_duration = max(2, min(int(duration_minutes), 60))
+        authorization = ContentAuthorization(
+            authorized=authorized,
+            rights_basis=rights_basis
+            if rights_basis
+            in {
+                "own",
+                "licensed",
+                "public_domain",
+                "fair_use",
+                "permission",
+                "other",
+            }
+            else "other",
+            notes=authorization_notes,
+        )
+        assert_authorized(
+            authorization,
+            required=runtime_settings.require_content_authorization,
+        )
+        check_quota(actor_from(http_request))
         upload_dir = runtime_settings.runtime_dir / "paper-podcast-uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
         temporary = upload_dir / f"{uuid.uuid4().hex}.pdf"
@@ -514,6 +696,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 style=style,
                 duration_minutes=safe_duration,
             )
+            apply_authorization(manifest, authorization)
+            paper_podcast_manager.store.save(manifest)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="create",
+                resource_type="paper_podcast",
+                resource_id=manifest.id,
+                details={"title": manifest.title, "authorization": authorization.model_dump(mode="json")},
+            )
             return paper_podcast_payload(manifest)
         finally:
             temporary.unlink(missing_ok=True)
@@ -526,6 +717,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         podcast_id: str,
         step: PaperPodcastStep,
         request: PaperPodcastRequest,
+        http_request: Request,
     ) -> dict:
         try:
             selected_settings = settings_with_saved_key(
@@ -537,6 +729,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 step,
                 request,
                 settings=selected_settings,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="run_step",
+                resource_type="paper_podcast",
+                resource_id=podcast_id,
+                details={"step": step.value},
             )
             return paper_podcast_payload(manifest)
         except FileNotFoundError as exc:
@@ -554,6 +753,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def run_paper_podcast_all(
         podcast_id: str,
         request: PaperPodcastRequest,
+        http_request: Request,
     ) -> dict:
         try:
             selected_settings = settings_with_saved_key(
@@ -564,6 +764,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 podcast_id,
                 request,
                 settings=selected_settings,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="run_all",
+                resource_type="paper_podcast",
+                resource_id=podcast_id,
+                details={},
             )
             return paper_podcast_payload(manifest)
         except FileNotFoundError as exc:
@@ -604,6 +811,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "script_json": manifest.script_json_path,
             "text": manifest.text_path,
             "notes": manifest.notes_path,
+            "video": manifest.video_path,
+            "quality": manifest.metadata.get("script_quality_path"),
+            "comparison": manifest.metadata.get("script_comparison_path"),
         }.get(artifact)
         if not selected:
             raise HTTPException(
@@ -618,7 +828,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             and outputs_root not in path.parents
         ) or not path.is_file():
             raise HTTPException(status_code=404, detail="论文播客产物不存在")
-        media_type = "audio/mpeg" if path.suffix.lower() == ".mp3" else None
+        media_type = (
+            "audio/mpeg"
+            if path.suffix.lower() == ".mp3"
+            else "video/mp4"
+            if path.suffix.lower() == ".mp4"
+            else None
+        )
         return FileResponse(path, media_type=media_type, filename=path.name)
 
     @app.post(
@@ -626,8 +842,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         status_code=status.HTTP_201_CREATED,
     )
     def import_book(
+        http_request: Request,
         file: UploadFile = File(...),
         output_mode: str = Form("translated_only"),
+        authorized: bool = Form(False),
+        rights_basis: str = Form("other"),
+        authorization_notes: str = Form(""),
     ) -> dict:
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in {".pdf", ".epub"}:
@@ -651,6 +871,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=400,
                 detail="论文/专业 PDF 排版模式仅支持 PDF。",
             )
+        authorization = ContentAuthorization(
+            authorized=authorized,
+            rights_basis=rights_basis
+            if rights_basis
+            in {
+                "own",
+                "licensed",
+                "public_domain",
+                "fair_use",
+                "permission",
+                "other",
+            }
+            else "other",
+            notes=authorization_notes,
+        )
+        assert_authorized(
+            authorization,
+            required=runtime_settings.require_content_authorization,
+        )
+        check_quota(actor_from(http_request))
         upload_dir = runtime_settings.runtime_dir / "book-uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
         temporary = upload_dir / f"{uuid.uuid4().hex}{suffix}"
@@ -670,6 +910,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 output_mode=output_mode,
                 title=Path(file.filename or temporary.name).stem,
             )
+            apply_authorization(manifest, authorization)
+            book_manager.store.save(manifest)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="create",
+                resource_type="book",
+                resource_id=manifest.id,
+                details={"title": manifest.title, "authorization": authorization.model_dump(mode="json")},
+            )
             return book_payload(manifest)
         finally:
             temporary.unlink(missing_ok=True)
@@ -682,6 +931,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         book_id: str,
         step: BookStep,
         request: BookStepRequest,
+        http_request: Request,
     ) -> dict:
         try:
             selected_settings = settings_with_saved_key(
@@ -693,6 +943,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 step,
                 request,
                 settings=selected_settings,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="run_step",
+                resource_type="book",
+                resource_id=book_id,
+                details={"step": step.value},
             )
             return book_payload(manifest)
         except FileNotFoundError as exc:
@@ -707,6 +964,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def run_book_all(
         book_id: str,
         request: BookStepRequest,
+        http_request: Request,
     ) -> dict:
         try:
             selected_settings = settings_with_saved_key(
@@ -718,6 +976,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request,
                 settings=selected_settings,
             )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="run_all",
+                resource_type="book",
+                resource_id=book_id,
+                details={},
+            )
             return book_payload(manifest)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
@@ -728,6 +993,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_book(book_id: str) -> dict:
         try:
             return book_payload(book_manager.store.get(book_id))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
+
+    @app.patch("/api/books/{book_id}/library")
+    def update_book_library(
+        book_id: str,
+        request: BookLibraryUpdateRequest,
+        http_request: Request,
+    ) -> dict:
+        try:
+            manifest = book_manager.store.get(book_id)
+            updated = book_manager.store.update_library(
+                manifest,
+                tags=request.tags,
+                favorite=request.favorite,
+                summary=request.summary,
+                glossary=request.glossary,
+                reading_status=request.reading_status,
+                priority=request.priority,
+                quality_score=request.quality_score,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="update_library",
+                resource_type="book",
+                resource_id=book_id,
+                details=request.model_dump(exclude_none=True),
+            )
+            return book_payload(updated)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
 
@@ -762,22 +1056,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(path, filename=path.name)
 
     @app.post("/api/jobs", status_code=status.HTTP_202_ACCEPTED)
-    def create_job(request: JobCreateRequest) -> dict:
+    def create_job(
+        request: JobCreateRequest,
+        http_request: Request,
+    ) -> dict:
         try:
+            assert_authorized(
+                request.authorization,
+                required=runtime_settings.require_content_authorization,
+            )
+            check_quota(actor_from(http_request))
             validated = validate_remote_url(request.url, runtime_settings)
         except InvalidSourceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        manifest = manager.submit(validated, request.options)
+        manifest = manager.submit(
+            validated,
+            request.options,
+            metadata=authorization_metadata(request.authorization),
+        )
+        audit_log.record(
+            actor=actor_from(http_request),
+            action="create",
+            resource_type="job",
+            resource_id=manifest.id,
+            details={"source": validated, "authorization": request.authorization.model_dump(mode="json") if request.authorization else None},
+        )
         return job_payload(manifest)
 
     @app.post(
         "/api/jobs/staged",
         status_code=status.HTTP_202_ACCEPTED,
     )
-    def create_staged_job(request: StagedJobCreateRequest) -> dict:
+    def create_staged_job(
+        request: StagedJobCreateRequest,
+        http_request: Request,
+    ) -> dict:
         try:
+            assert_authorized(
+                request.authorization,
+                required=runtime_settings.require_content_authorization,
+            )
+            check_quota(actor_from(http_request))
             validated = validate_remote_url(request.url, runtime_settings)
             manifest = manager.create(validated, request.options)
+            apply_authorization(manifest, request.authorization)
+            manager.store.save(manifest)
             manager.submit_step(
                 manifest.id,
                 PipelineStep.download,
@@ -785,6 +1108,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except (InvalidSourceError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit_log.record(
+            actor=actor_from(http_request),
+            action="create",
+            resource_type="job",
+            resource_id=manifest.id,
+            details={"source": validated, "mode": "staged"},
+        )
         return job_payload(manifest)
 
     @app.post(
@@ -793,8 +1123,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def create_automated_job(
         request: AutomatedJobCreateRequest,
+        http_request: Request,
     ) -> dict:
         try:
+            assert_authorized(
+                request.authorization,
+                required=runtime_settings.require_content_authorization,
+            )
+            check_quota(actor_from(http_request))
             validated = validate_remote_url(request.url, runtime_settings)
             automated_settings = settings_for(request.settings)
             if request.translator_api_key_ref:
@@ -811,12 +1147,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for secret in (
                 "translator_api_key",
                 "tts_http_api_key",
+                "diarization_auth_token",
             ):
                 settings_snapshot.pop(secret, None)
             manifest = manager.create(
                 validated,
                 request.options,
             )
+            apply_authorization(manifest, request.authorization)
             manifest.metadata.update(
                 {
                     "run_mode": "automated",
@@ -830,6 +1168,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except (InvalidSourceError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit_log.record(
+            actor=actor_from(http_request),
+            action="create",
+            resource_type="job",
+            resource_id=manifest.id,
+            details={"source": validated, "mode": "automated"},
+        )
         return job_payload(manifest)
 
     @app.get("/api/jobs/{job_id}")
@@ -841,6 +1186,222 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return job_payload(manifest)
 
     @app.post(
+        "/api/jobs/{job_id}/cancel",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def cancel_job(job_id: str, http_request: Request) -> dict:
+        try:
+            manifest = manager.cancel(job_id)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="cancel",
+                resource_type="job",
+                resource_id=job_id,
+                details={},
+            )
+            return job_payload(manifest)
+        except (FileNotFoundError, VideoTranslatorError) as exc:
+            raise HTTPException(status_code=404, detail="任务不存在") from exc
+
+    @app.post(
+        "/api/books/{book_id}/cancel",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def cancel_book(book_id: str, http_request: Request) -> dict:
+        try:
+            manifest = book_manager.cancel(book_id)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="cancel",
+                resource_type="book",
+                resource_id=book_id,
+                details={},
+            )
+            return book_payload(manifest)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
+
+    @app.post(
+        "/api/paper-podcasts/{podcast_id}/cancel",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def cancel_paper_podcast(
+        podcast_id: str,
+        http_request: Request,
+    ) -> dict:
+        try:
+            manifest = paper_podcast_manager.cancel(podcast_id)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="cancel",
+                resource_type="paper_podcast",
+                resource_id=podcast_id,
+                details={},
+            )
+            return paper_podcast_payload(manifest)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+
+    @app.patch("/api/jobs/{job_id}/authorization")
+    def update_job_authorization(
+        job_id: str,
+        payload: ContentAuthorizationRequest,
+        http_request: Request,
+    ) -> dict:
+        try:
+            manifest = manager.store.get(job_id)
+            apply_authorization(manifest, payload.authorization)
+            manager.store.save(manifest)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="update_authorization",
+                resource_type="job",
+                resource_id=job_id,
+                details=payload.authorization.model_dump(mode="json"),
+            )
+            return job_payload(manifest)
+        except (FileNotFoundError, VideoTranslatorError) as exc:
+            raise HTTPException(status_code=404, detail="任务不存在") from exc
+
+    @app.patch("/api/books/{book_id}/authorization")
+    def update_book_authorization(
+        book_id: str,
+        payload: ContentAuthorizationRequest,
+        http_request: Request,
+    ) -> dict:
+        try:
+            manifest = book_manager.store.get(book_id)
+            apply_authorization(manifest, payload.authorization)
+            book_manager.store.save(manifest)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="update_authorization",
+                resource_type="book",
+                resource_id=book_id,
+                details=payload.authorization.model_dump(mode="json"),
+            )
+            return book_payload(manifest)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
+
+    @app.patch("/api/paper-podcasts/{podcast_id}/authorization")
+    def update_paper_podcast_authorization(
+        podcast_id: str,
+        payload: ContentAuthorizationRequest,
+        http_request: Request,
+    ) -> dict:
+        try:
+            manifest = paper_podcast_manager.store.get(podcast_id)
+            apply_authorization(manifest, payload.authorization)
+            paper_podcast_manager.store.save(manifest)
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="update_authorization",
+                resource_type="paper_podcast",
+                resource_id=podcast_id,
+                details=payload.authorization.model_dump(mode="json"),
+            )
+            return paper_podcast_payload(manifest)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+
+    @app.delete("/api/jobs/{job_id}")
+    def delete_job(
+        job_id: str,
+        http_request: Request,
+        delete_outputs: bool = True,
+    ) -> dict:
+        if manager.is_running(job_id):
+            raise HTTPException(status_code=409, detail="任务正在执行，不能删除。")
+        try:
+            removed = manager.store.delete(
+                job_id,
+                delete_outputs=delete_outputs,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="delete",
+                resource_type="job",
+                resource_id=job_id,
+                details={
+                    "delete_outputs": delete_outputs,
+                    "removed": [str(path) for path in removed],
+                },
+            )
+            return {"deleted": True, "removed": [str(path) for path in removed]}
+        except (FileNotFoundError, VideoTranslatorError) as exc:
+            raise HTTPException(status_code=404, detail="任务不存在") from exc
+
+    @app.delete("/api/books/{book_id}")
+    def delete_book(
+        book_id: str,
+        http_request: Request,
+        delete_outputs: bool = True,
+    ) -> dict:
+        if book_manager.is_running(book_id):
+            raise HTTPException(
+                status_code=409,
+                detail="书籍任务正在执行，不能删除。",
+            )
+        try:
+            removed = book_manager.store.delete(
+                book_id,
+                delete_outputs=delete_outputs,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="delete",
+                resource_type="book",
+                resource_id=book_id,
+                details={
+                    "delete_outputs": delete_outputs,
+                    "removed": [str(path) for path in removed],
+                },
+            )
+            return {"deleted": True, "removed": [str(path) for path in removed]}
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="书籍任务不存在") from exc
+
+    @app.delete("/api/paper-podcasts/{podcast_id}")
+    def delete_paper_podcast(
+        podcast_id: str,
+        http_request: Request,
+        delete_outputs: bool = True,
+    ) -> dict:
+        if paper_podcast_manager.is_running(podcast_id):
+            raise HTTPException(
+                status_code=409,
+                detail="论文播客任务正在执行，不能删除。",
+            )
+        try:
+            removed = paper_podcast_manager.store.delete(
+                podcast_id,
+                delete_outputs=delete_outputs,
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="delete",
+                resource_type="paper_podcast",
+                resource_id=podcast_id,
+                details={
+                    "delete_outputs": delete_outputs,
+                    "removed": [str(path) for path in removed],
+                },
+            )
+            return {"deleted": True, "removed": [str(path) for path in removed]}
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="论文播客任务不存在",
+            ) from exc
+
+    @app.post(
         "/api/jobs/{job_id}/steps/{step}",
         status_code=status.HTTP_202_ACCEPTED,
     )
@@ -848,6 +1409,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job_id: str,
         step: PipelineStep,
         request: StepRunRequest,
+        http_request: Request,
     ) -> dict:
         try:
             manifest = manager.store.get(job_id)
@@ -870,6 +1432,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 step,
                 force=request.force,
                 settings=settings_for(request.settings),
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="run_step",
+                resource_type="job",
+                resource_id=job_id,
+                details={"step": step.value, "force": request.force},
             )
         except HTTPException:
             raise
@@ -914,6 +1483,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
         safe_limit = max(1, min(limit, 500))
         return {"total": len(items), "items": items[:safe_limit]}
+
+    @app.post(
+        "/api/jobs/{job_id}/segments/rerun",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def rerun_job_segments(
+        job_id: str,
+        request: SegmentRerunRequest,
+        http_request: Request,
+    ) -> dict:
+        try:
+            manifest = manager.store.get(job_id)
+            if manager.is_running(job_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail="任务正在执行，请等待当前步骤完成。",
+                )
+            apply_option_updates(
+                manifest,
+                StepRunRequest(
+                    force=False,
+                    options=request.options,
+                    settings=request.settings,
+                ),
+            )
+            manager.submit_segments(
+                job_id,
+                segment_ids=request.segment_ids,
+                mode=request.mode,
+                settings=settings_for(request.settings),
+            )
+            audit_log.record(
+                actor=actor_from(http_request),
+                action="rerun_segments",
+                resource_type="job",
+                resource_id=job_id,
+                details={
+                    "segment_ids": request.segment_ids,
+                    "mode": request.mode,
+                },
+            )
+            return job_payload(manifest)
+        except HTTPException:
+            raise
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="任务不存在") from exc
+        except (VideoTranslatorError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/jobs/{job_id}/download")
     def download_job(job_id: str) -> FileResponse:

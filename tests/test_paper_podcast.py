@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pymupdf
 
@@ -129,3 +130,72 @@ def test_paper_podcast_accepts_common_model_script_variants() -> None:
     assert dialogue["lines"][0]["speaker"] == "主持人A"
     assert "迁移学习" in dialogue["lines"][1]["text"]
     assert outline["lines"]
+
+
+def test_paper_podcast_can_compare_script_models(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "paper.pdf"
+    make_pdf(source)
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        translator_provider="ollama",
+        translator_model="tiny",
+    )
+    store = PaperPodcastStore(settings)
+    pipeline = PaperPodcastPipeline(settings, store)
+
+    class FakeTranslator:
+        def __init__(self, settings, logger):
+            self.settings = settings
+
+        def complete_json(self, *, system_prompt, user_prompt):
+            if "论文阅读助手" in system_prompt:
+                return {
+                    "notes": ["Transformer 完全基于注意力机制。"],
+                    "terms": [
+                        {
+                            "term": "Transformer",
+                            "meaning": "基于注意力的序列建模架构",
+                        }
+                    ],
+                    "questions": ["为什么注意力机制重要？"],
+                }
+            line_count = 10 if self.settings.translator_model == "larger" else 3
+            return {
+                "title": "Transformer 论文讲解",
+                "summary": "讲解 Attention Is All You Need。",
+                "chapters": ["背景", "方法", "影响"],
+                "takeaways": ["Transformer 用注意力替代循环结构。"],
+                "lines": [
+                    {
+                        "speaker": "主持人A" if index % 2 == 0 else "嘉宾B",
+                        "text": f"第 {index + 1} 点：Transformer 的注意力机制让模型更容易并行训练。",
+                    }
+                    for index in range(line_count)
+                ],
+            }
+
+    monkeypatch.setattr(
+        "video_translator.paper_podcast.pipeline.SegmentTranslator",
+        FakeTranslator,
+    )
+
+    manifest = pipeline.import_paper(source, title="Attention", duration_minutes=4)
+    manifest = pipeline.extract(manifest)
+    manifest = pipeline.script(
+        manifest,
+        target_language="简体中文",
+        style="deep_dive",
+        duration_minutes=4,
+        glossary={},
+        script_compare_models=["larger"],
+    )
+
+    assert manifest.metadata["script_selected_model"] == "larger"
+    assert manifest.metadata["script_compare_models"] == ["tiny", "larger"]
+    assert Path(manifest.metadata["script_comparison_path"]).is_file()
+    script = json.loads(Path(manifest.script_json_path).read_text(encoding="utf-8"))
+    assert len(script["lines"]) == 10

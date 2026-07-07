@@ -87,7 +87,7 @@ def validate_remote_url(url: str, settings: Settings) -> str:
         raise InvalidSourceError(
             "Apple Podcasts 当前只支持单集链接，URL 必须包含 ?i=单集ID。"
             "请在 Apple Podcasts 中打开具体一集后复制分享链接；"
-            "整档节目批量下载尚未实现。"
+            "整档节目请使用 RSS 批量下载入口：make podcast URL='节目URL'。"
         )
     return url.strip()
 

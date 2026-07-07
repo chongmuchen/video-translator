@@ -94,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="eng",
         help="Tesseract/OCRmyPDF 语言，例如 eng 或 chi_sim+eng",
     )
+    run.add_argument(
+        "--ocr-backend",
+        choices=["ocrmypdf", "docling"],
+        default="ocrmypdf",
+        help="扫描/复杂 PDF 抽取后端；docling 需要额外安装",
+    )
 
     imported = commands.add_parser("import", help="只导入书籍")
     imported.add_argument("source")
@@ -111,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
     )
     extract.add_argument("--ocr-languages", default="eng")
+    extract.add_argument(
+        "--ocr-backend",
+        choices=["ocrmypdf", "docling"],
+        default="ocrmypdf",
+    )
 
     translate = commands.add_parser("translate", help="翻译并逐批缓存")
     translate.add_argument("book_id")
@@ -168,6 +179,7 @@ def main() -> None:
                 glossary=_glossary(args.glossary),
                 ocr_mode=args.ocr_mode,
                 ocr_languages=args.ocr_languages,
+                ocr_backend=args.ocr_backend,
             )
         elif args.command == "import":
             manifest = pipeline.import_book(
@@ -179,6 +191,7 @@ def main() -> None:
                 store.get(args.book_id),
                 ocr_mode=args.ocr_mode,
                 ocr_languages=args.ocr_languages,
+                ocr_backend=args.ocr_backend,
             )
         elif args.command == "translate":
             manifest = pipeline.translate(

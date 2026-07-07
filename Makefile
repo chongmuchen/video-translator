@@ -24,6 +24,9 @@ ASR_MODEL ?= small
 ASR_DEVICE ?= auto
 ASR_COMPUTE_TYPE ?= auto
 ASR_UNCLEAR_THRESHOLD ?= 0.45
+ENABLE_DIARIZATION ?= false
+DIARIZATION_MODEL ?= pyannote/speaker-diarization-3.1
+DIARIZATION_AUTH_TOKEN ?=
 SOURCE_LANGUAGE ?=
 TARGET_LANGUAGE ?= 简体中文
 TRANSLATOR_PROVIDER ?= openai_compatible
@@ -58,6 +61,10 @@ TTS_RATE ?= +0%
 TTS_VOLUME ?= +0%
 TTS_HTTP_URL ?=
 TTS_HTTP_API_KEY ?=
+SPEAKER_VOICE_MAP ?=
+TTS_TIMEOUT_SECONDS ?= 180
+TTS_RETRIES ?= 2
+TTS_RETRY_BACKOFF_SECONDS ?= 2
 COSYVOICE_BASE_URL ?= http://127.0.0.1:50000
 COSYVOICE_MODE ?= sft
 COSYVOICE_SAMPLE_RATE ?= 22050
@@ -69,6 +76,8 @@ KEEP_ORIGINAL_AUDIO ?= true
 DUCK_ORIGINAL_AUDIO ?= true
 BURN_SUBTITLES ?= false
 ENABLE_DEMUCS ?= false
+ENABLE_LIP_SYNC ?= false
+LIP_SYNC_COMMAND ?=
 MUX_ARGS ?=
 SLEEP_BETWEEN ?= 2
 PODCAST_ARGS ?= --list-only
@@ -80,9 +89,12 @@ BOOK_CODEX_STRATEGY ?= quality
 BOOK_ARGS ?=
 BOOK_OCR_MODE ?= auto
 BOOK_OCR_LANGUAGES ?= eng
+BOOK_OCR_BACKEND ?= ocrmypdf
 PAPER_FILE ?=
 PAPER_PODCAST_ID ?=
 PAPER_PODCAST_STYLE ?= deep_dive
+PAPER_PODCAST_SCRIPT_BACKEND ?= builtin
+PAPER_PODCAST_COMPARE_MODELS ?=
 PAPER_PODCAST_DURATION ?= 8
 PAPER_PODCAST_PROVIDER ?= ollama
 PAPER_PODCAST_MODEL ?= $(if $(filter ollama,$(PAPER_PODCAST_PROVIDER)),qwen3:8b,)
@@ -92,6 +104,7 @@ PAPER_PODCAST_VOICE_A ?= zh-CN-XiaoxiaoNeural
 PAPER_PODCAST_VOICE_B ?= zh-CN-YunxiNeural
 PAPER_PODCAST_TTS_RATE ?= +0%
 PAPER_PODCAST_SILENCE_MS ?= 220
+PAPER_PODCAST_MAKE_VIDEO ?= false
 PAPER_PODCAST_ARGS ?=
 
 ifeq ($(strip $(PARTS)),)
@@ -112,7 +125,9 @@ DOWNLOAD_ARGS = --download-backend "$(DOWNLOAD_BACKEND)" \
 	$(if $(strip $(DOWNLOAD_PROXY)),--proxy "$(DOWNLOAD_PROXY)",) \
 	$(if $(strip $(DOWNLOAD_IMPERSONATE)),--impersonate "$(DOWNLOAD_IMPERSONATE)",)
 
-.PHONY: help bootstrap doctor test plan run web auto clean list download download-one podcast extract transcribe translate synthesize align mux next resume status book-run book-import book-extract book-translate book-render book-status paper-podcast-run paper-podcast-status
+CLEANUP_DAYS ?= 7
+
+.PHONY: help bootstrap doctor test plan run web auto clean cleanup-data list download download-one podcast extract transcribe translate synthesize align mux next resume status book-run book-import book-extract book-translate book-render book-status paper-podcast-run paper-podcast-status
 
 help:
 	@echo "Video Translator"
@@ -122,6 +137,7 @@ help:
 	@echo "  make test"
 	@echo "  make plan"
 	@echo "  make run"
+	@echo "  make cleanup-data CLEANUP_DAYS=7"
 	@echo
 	@echo "合集："
 	@echo "  make list URL='https://www.bilibili.com/video/BV.../'"
@@ -140,6 +156,7 @@ help:
 	@echo
 	@echo "语音识别与时间戳："
 	@echo "  make transcribe JOB_ID='任务ID' ASR_BACKEND=mlx_whisper ASR_MODEL=small.en SOURCE_LANGUAGE=en"
+	@echo "  make transcribe JOB_ID='任务ID' ENABLE_DIARIZATION=true DIARIZATION_AUTH_TOKEN='hf_...'"
 	@echo "  make transcribe JOB_ID='任务ID' ASR_BACKEND=faster_whisper ASR_MODEL=small SOURCE_LANGUAGE=en"
 	@echo "  make transcribe JOB_ID='任务ID' ASR_MODEL=large-v3 TRANSCRIBE_ARGS='--force'"
 	@echo
@@ -148,6 +165,8 @@ help:
 	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=ollama"
 	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=kimi TRANSLATOR_API_KEY='...'"
 	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=minimax TRANSLATOR_API_KEY='...'"
+	@echo "  make synthesize JOB_ID='任务ID' SPEAKER_VOICE_MAP='{\"SPEAKER_00\":\"zh-CN-XiaoxiaoNeural\",\"SPEAKER_01\":\"zh-CN-YunxiNeural\"}'"
+	@echo "  make mux JOB_ID='任务ID' ENABLE_LIP_SYNC=true LIP_SYNC_COMMAND='python /path/Wav2Lip/inference.py --face {video} --audio {audio} --outfile {output}'"
 	@echo "  make translate JOB_ID='任务ID' TRANSLATOR_PROVIDER=deepseek TRANSLATOR_API_KEY='...'"
 	@echo "  make synthesize JOB_ID='任务ID' TTS_PROVIDER=edge"
 	@echo "  make align JOB_ID='任务ID'"
@@ -166,6 +185,7 @@ help:
 	@echo "PDF / EPUB 书籍翻译："
 	@echo "  make book-run BOOK_FILE='/path/book.pdf' BOOK_MODE=translated_only"
 	@echo "  make book-run BOOK_FILE='/path/scanned.pdf' BOOK_OCR_MODE=auto BOOK_OCR_LANGUAGES=eng"
+	@echo "  make book-run BOOK_FILE='/path/scanned.pdf' BOOK_OCR_BACKEND=docling"
 	@echo "  make book-run BOOK_FILE='/path/paper.pdf' BOOK_MODE=pdf2zh_bing_mono"
 	@echo "  make book-import BOOK_FILE='/path/book.epub'"
 	@echo "  make book-extract BOOK_ID='任务ID' BOOK_OCR_MODE=auto"
@@ -179,6 +199,9 @@ help:
 	@echo
 	@echo "论文讲解播客："
 	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf'"
+	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_SCRIPT_BACKEND=notebooklm"
+	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_COMPARE_MODELS='qwen3:8b,qwen3:14b'"
+	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_MAKE_VIDEO=true"
 	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_PROVIDER=codex_cli"
 	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf' PAPER_PODCAST_TTS_PROVIDER=cosyvoice"
 	@echo "  make paper-podcast-status PAPER_PODCAST_ID='任务ID'"
@@ -212,6 +235,9 @@ auto:
 	VT_ASR_DEVICE="$(ASR_DEVICE)" \
 	VT_ASR_COMPUTE_TYPE="$(ASR_COMPUTE_TYPE)" \
 	VT_ASR_UNCLEAR_THRESHOLD="$(ASR_UNCLEAR_THRESHOLD)" \
+	VT_ENABLE_DIARIZATION="$(ENABLE_DIARIZATION)" \
+	VT_DIARIZATION_MODEL="$(DIARIZATION_MODEL)" \
+	VT_DIARIZATION_AUTH_TOKEN="$(DIARIZATION_AUTH_TOKEN)" \
 	VT_TRANSLATOR_PROVIDER="$(TRANSLATOR_PROVIDER)" \
 	VT_TRANSLATOR_BASE_URL="$(TRANSLATOR_BASE_URL)" \
 	VT_TRANSLATOR_MODEL="$(TRANSLATOR_MODEL)" \
@@ -229,6 +255,10 @@ auto:
 	VT_TTS_VOLUME="$(TTS_VOLUME)" \
 	VT_TTS_HTTP_URL="$(TTS_HTTP_URL)" \
 	VT_TTS_HTTP_API_KEY="$(TTS_HTTP_API_KEY)" \
+	VT_SPEAKER_VOICE_MAP="$(SPEAKER_VOICE_MAP)" \
+	VT_TTS_TIMEOUT_SECONDS="$(TTS_TIMEOUT_SECONDS)" \
+	VT_TTS_RETRIES="$(TTS_RETRIES)" \
+	VT_TTS_RETRY_BACKOFF_SECONDS="$(TTS_RETRY_BACKOFF_SECONDS)" \
 	VT_COSYVOICE_BASE_URL="$(COSYVOICE_BASE_URL)" \
 	VT_COSYVOICE_MODE="$(COSYVOICE_MODE)" \
 	VT_COSYVOICE_SAMPLE_RATE="$(COSYVOICE_SAMPLE_RATE)" \
@@ -236,6 +266,8 @@ auto:
 	VT_MAX_TEMPO_FACTOR="$(MAX_TEMPO_FACTOR)" \
 	VT_DUCK_ORIGINAL_AUDIO="$(DUCK_ORIGINAL_AUDIO)" \
 	VT_ENABLE_DEMUCS="$(ENABLE_DEMUCS)" \
+	VT_ENABLE_LIP_SYNC="$(ENABLE_LIP_SYNC)" \
+	VT_LIP_SYNC_COMMAND="$(LIP_SYNC_COMMAND)" \
 	$(PYTHON) main.py run "$(URL)" \
 		--target-language "$(TARGET_LANGUAGE)" \
 		$(RUN_SOURCE_LANGUAGE_ARG) \
@@ -282,6 +314,7 @@ book-run:
 		--target-language "$(TARGET_LANGUAGE)" \
 		--ocr-mode "$(BOOK_OCR_MODE)" \
 		--ocr-languages "$(BOOK_OCR_LANGUAGES)" \
+		--ocr-backend "$(BOOK_OCR_BACKEND)" \
 		--provider "$(BOOK_PROVIDER)" \
 		--codex-strategy "$(BOOK_CODEX_STRATEGY)" \
 		$(GLOSSARY_ARG) $(BOOK_ARGS)
@@ -296,7 +329,8 @@ book-extract:
 		(echo "错误：缺少 BOOK_ID。" >&2; exit 2)
 	$(BOOK_CLI) extract "$(BOOK_ID)" \
 		--ocr-mode "$(BOOK_OCR_MODE)" \
-		--ocr-languages "$(BOOK_OCR_LANGUAGES)"
+		--ocr-languages "$(BOOK_OCR_LANGUAGES)" \
+		--ocr-backend "$(BOOK_OCR_BACKEND)"
 
 book-translate:
 	@test -n "$(strip $(BOOK_ID))" || \
@@ -324,6 +358,8 @@ paper-podcast-run:
 	VT_TRANSLATOR_API_KEY="$(TRANSLATOR_API_KEY)" \
 	$(PAPER_PODCAST_CLI) run "$(PAPER_FILE)" \
 		--style "$(PAPER_PODCAST_STYLE)" \
+		--script-backend "$(PAPER_PODCAST_SCRIPT_BACKEND)" \
+		$(if $(strip $(PAPER_PODCAST_COMPARE_MODELS)),--compare-models "$(PAPER_PODCAST_COMPARE_MODELS)",) \
 		--duration-minutes "$(PAPER_PODCAST_DURATION)" \
 		--target-language "$(TARGET_LANGUAGE)" \
 		--provider "$(PAPER_PODCAST_PROVIDER)" \
@@ -337,6 +373,7 @@ paper-podcast-run:
 		--cosyvoice-url "$(COSYVOICE_BASE_URL)" \
 		--http-tts-url "$(TTS_HTTP_URL)" \
 		--silence-ms "$(PAPER_PODCAST_SILENCE_MS)" \
+		$(if $(filter true 1 yes,$(PAPER_PODCAST_MAKE_VIDEO)),--make-video,) \
 		$(GLOSSARY_ARG) $(PAPER_PODCAST_ARGS)
 
 paper-podcast-status:
@@ -355,6 +392,9 @@ transcribe:
 	VT_ASR_DEVICE="$(ASR_DEVICE)" \
 	VT_ASR_COMPUTE_TYPE="$(ASR_COMPUTE_TYPE)" \
 	VT_ASR_UNCLEAR_THRESHOLD="$(ASR_UNCLEAR_THRESHOLD)" \
+	VT_ENABLE_DIARIZATION="$(ENABLE_DIARIZATION)" \
+	VT_DIARIZATION_MODEL="$(DIARIZATION_MODEL)" \
+	VT_DIARIZATION_AUTH_TOKEN="$(DIARIZATION_AUTH_TOKEN)" \
 	VT_SOURCE_LANGUAGE="$(SOURCE_LANGUAGE)" \
 	$(PYTHON) main.py step "$(JOB_ID)" transcribe $(TRANSCRIBE_ARGS)
 
@@ -385,6 +425,10 @@ synthesize:
 	VT_TTS_VOLUME="$(TTS_VOLUME)" \
 	VT_TTS_HTTP_URL="$(TTS_HTTP_URL)" \
 	VT_TTS_HTTP_API_KEY="$(TTS_HTTP_API_KEY)" \
+	VT_SPEAKER_VOICE_MAP="$(SPEAKER_VOICE_MAP)" \
+	VT_TTS_TIMEOUT_SECONDS="$(TTS_TIMEOUT_SECONDS)" \
+	VT_TTS_RETRIES="$(TTS_RETRIES)" \
+	VT_TTS_RETRY_BACKOFF_SECONDS="$(TTS_RETRY_BACKOFF_SECONDS)" \
 	VT_COSYVOICE_BASE_URL="$(COSYVOICE_BASE_URL)" \
 	VT_COSYVOICE_MODE="$(COSYVOICE_MODE)" \
 	VT_COSYVOICE_SAMPLE_RATE="$(COSYVOICE_SAMPLE_RATE)" \
@@ -401,6 +445,8 @@ mux:
 	@test -n "$(strip $(JOB_ID))" || \
 		(echo "错误：缺少 JOB_ID。用法：make mux JOB_ID='任务ID'" >&2; exit 2)
 	VT_ENABLE_DEMUCS="$(ENABLE_DEMUCS)" \
+	VT_ENABLE_LIP_SYNC="$(ENABLE_LIP_SYNC)" \
+	VT_LIP_SYNC_COMMAND="$(LIP_SYNC_COMMAND)" \
 	$(PYTHON) main.py step "$(JOB_ID)" mux \
 		$(KEEP_ORIGINAL_ARG) \
 		$(DUCK_ORIGINAL_ARG) \
@@ -422,3 +468,6 @@ status:
 
 clean:
 	rm -rf .pytest_cache .coverage
+
+cleanup-data:
+	$(CLI) cleanup --days "$(CLEANUP_DAYS)" $(if $(filter true 1 yes,$(APPLY)),--apply,)
