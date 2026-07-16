@@ -27,8 +27,27 @@ def explain_download_error(
     *,
     is_bilibili: bool,
     is_apple_podcasts: bool = False,
+    has_cookies: bool = False,
 ) -> str:
     message = str(error)
+    if (
+        "Sign in to confirm you’re not a bot" in message
+        or "Sign in to confirm you're not a bot" in message
+    ):
+        if has_cookies:
+            guidance = (
+                "当前已配置 Cookies，但 YouTube 仍未通过验证。请先在所选浏览器中"
+                "登录并打开该视频，再重试；若浏览器 Cookies 无法读取，请导出最新的"
+                " Netscape 格式 cookies.txt，并使用 --cookie-file 指定。"
+            )
+        else:
+            guidance = (
+                "YouTube 要求登录以完成人机验证。命令行请加"
+                " --cookies-from-browser chrome（或 safari/firefox）；网页端请在"
+                "“下载 / 获取媒体”中选择 Cookies 来源。也可以在 .env 中设置"
+                " VT_COOKIES_FROM_BROWSER=chrome。"
+            )
+        return f"{guidance}原始错误：{message}"
     if is_apple_podcasts and (
         "No video formats found" in message
         or "serialized-server-data" in message
@@ -241,6 +260,9 @@ def acquire_source(
                 exc,
                 is_bilibili=is_bilibili,
                 is_apple_podcasts=is_apple_podcasts,
+                has_cookies=bool(
+                    settings.cookies_from_browser or settings.cookie_file
+                ),
             )
         ) from exc
 

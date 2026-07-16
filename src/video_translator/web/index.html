@@ -1306,12 +1306,12 @@
         id: "download",
         name: "下载 / 获取媒体",
         description: "从 URL 下载视频或播客，并检查音轨和时长",
-        recommendation: "推荐保持 auto：B站媒体会优先使用系统 curl 断点续传，YouTube 和 Apple Podcasts 使用 yt-dlp。登录内容才需要 Cookies。",
+        recommendation: "推荐保持 auto：B站媒体会优先使用系统 curl 断点续传，YouTube 和 Apple Podcasts 使用 yt-dlp。YouTube 即使是公开视频，也可能因反机器人验证而需要 Cookies。",
         command: id => `make download-one URL='视频URL'\\n# 已有任务强制重下：\\n.venv/bin/python main.py step ${id} download --force`,
         fields: [
           {key: "max_download_height", scope: "settings", label: "最高画质", type: "select", value: "1080", options: [["720","720p"],["1080","1080p（推荐）"],["1440","1440p"],["2160","2160p"]], help: "只影响视频，纯音频忽略。"},
           {key: "download_backend", scope: "settings", label: "下载后端", type: "select", value: "auto", options: [["auto","auto（推荐）"],["native","yt-dlp native"],["curl","系统 curl"]], help: "B站 TLS 不稳定时可明确选 curl。"},
-          {key: "cookies_from_browser", scope: "settings", label: "Cookies 来源", type: "select", value: "", options: [["","不读取"],["chrome","Chrome"],["safari","Safari"],["firefox","Firefox"]], help: "仅登录、会员或年龄限制内容需要。"},
+          {key: "cookies_from_browser", scope: "settings", label: "Cookies 来源", type: "select", value: "", options: [["","不读取"],["chrome","Chrome"],["safari","Safari"],["firefox","Firefox"]], help: "登录、会员、年龄限制或 YouTube 反机器人验证时需要；浏览器中须已登录对应站点。"},
           {key: "download_proxy", scope: "settings", label: "代理", type: "text", value: "", placeholder: "留空使用系统设置；direct 表示直连", help: "B站出现 412 或 TLS 错误时可尝试 direct。"},
           {key: "download_impersonate", scope: "settings", label: "浏览器模拟", type: "text", value: "", placeholder: "例如 chrome", help: "站点风控时使用，普通下载留空。"}
         ]

@@ -1415,7 +1415,13 @@ cp test-videos.example.txt test-videos.txt
   --cookies-from-browser chrome
 ```
 
-公开视频不需要 Cookies，可以去掉 `--cookies-from-browser`。
+公开视频通常不需要 Cookies，可以先去掉 `--cookies-from-browser`；但 YouTube
+触发“Sign in to confirm you're not a bot”时，公开视频也需要读取已登录浏览器的
+Cookies。可在命令中添加 `--cookies-from-browser chrome`，或持久写入 `.env`：
+
+```dotenv
+VT_COOKIES_FROM_BROWSER=chrome
+```
 
 每个成功结果应显示：
 

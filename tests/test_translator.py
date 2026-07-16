@@ -183,3 +183,45 @@ def test_translator_retries_transient_pipeline_errors(
 
     assert result == {"segments": [{"id": 0, "text": "你好"}]}
     assert calls == 2
+
+
+def test_translator_retries_response_missing_segment_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        translator_provider="codex_cli",
+        translator_retries=1,
+        translator_retry_backoff_seconds=0,
+    )
+    translator = SegmentTranslator(settings, logging.getLogger("test"))
+    calls = 0
+
+    def fake_codex(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return '{"segments":[{"id":0,"text":"你好"}]}'
+        return (
+            '{"segments":['
+            '{"id":0,"text":"你好"},'
+            '{"id":1,"text":"世界"}'
+            "]}"
+        )
+
+    monkeypatch.setattr(translator, "_translate_with_codex", fake_codex)
+    segments = [
+        Segment(index=0, start=0, end=1, source_text="hello"),
+        Segment(index=1, start=1, end=2, source_text="world"),
+    ]
+
+    translator.translate(
+        segments,
+        target_language="简体中文",
+        glossary={},
+    )
+
+    assert calls == 2
+    assert [item.translated_text for item in segments] == ["你好", "世界"]

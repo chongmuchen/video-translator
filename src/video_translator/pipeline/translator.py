@@ -112,13 +112,13 @@ class SegmentTranslator:
             f"{json.dumps(payload_segments, ensure_ascii=False)}"
         )
 
-        value = self.complete_json(
+        self.complete_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-        )
-        apply_translation_response(
-            segments,
-            json.dumps(value, ensure_ascii=False),
+            response_validator=lambda value: apply_translation_response(
+                segments,
+                json.dumps(value, ensure_ascii=False),
+            ),
         )
 
     def complete_json(
@@ -126,17 +126,21 @@ class SegmentTranslator:
         *,
         system_prompt: str,
         user_prompt: str,
+        response_validator: Callable[[dict], None] | None = None,
     ) -> dict:
-        """Run the configured provider and return one validated JSON object."""
+        """Run the provider and return a JSON object that passes validation."""
 
         attempts = max(1, self.settings.translator_retries + 1)
         delay = max(0.0, self.settings.translator_retry_backoff_seconds)
         for attempt in range(1, attempts + 1):
             try:
-                return self._complete_json_once(
+                value = self._complete_json_once(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                 )
+                if response_validator:
+                    response_validator(value)
+                return value
             except ConfigurationError:
                 raise
             except PipelineError as exc:

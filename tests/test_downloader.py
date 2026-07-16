@@ -56,6 +56,25 @@ def test_explains_bilibili_412() -> None:
     assert "--proxy direct" in message
 
 
+def test_explains_youtube_bot_check_without_cookies() -> None:
+    message = explain_download_error(
+        RuntimeError("Sign in to confirm you’re not a bot"),
+        is_bilibili=False,
+    )
+    assert "--cookies-from-browser chrome" in message
+    assert "VT_COOKIES_FROM_BROWSER=chrome" in message
+
+
+def test_explains_youtube_bot_check_with_cookies() -> None:
+    message = explain_download_error(
+        RuntimeError("Sign in to confirm you're not a bot"),
+        is_bilibili=False,
+        has_cookies=True,
+    )
+    assert "当前已配置 Cookies" in message
+    assert "--cookie-file" in message
+
+
 def test_explains_tls_eof() -> None:
     message = explain_download_error(
         RuntimeError("SSL: UNEXPECTED_EOF_WHILE_READING"),
