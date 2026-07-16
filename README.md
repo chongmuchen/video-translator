@@ -159,6 +159,17 @@ make mux JOB_ID='任务ID'
 | `SLEEP_BETWEEN` | `2` | 合集每集之间等待秒数，降低站点风控概率。 |
 | `EXTRA` | 空 | 仅用于传入尚未封装的额外 CLI 参数。 |
 
+后台并发参数（对应 `.env` 中的 `VT_*` 环境变量）：
+
+| 环境变量 | 默认值 | 说明 |
+|---|---:|---|
+| `VT_WORKER_COUNT` | `3` | 视频任务总并发数；不同课程可同时推进。 |
+| `VT_ASR_WORKER_COUNT` | `1` | 语音识别并发数；默认串行，避免 MLX/GPU 显存争用。 |
+| `VT_TRANSLATION_WORKER_COUNT` | `2` | LLM 翻译并发数，兼顾吞吐和接口限流。 |
+| `VT_MEDIA_WORKER_COUNT` | `2` | 抽取、对齐、混音和封装等 FFmpeg 阶段的并发数。 |
+
+任务进入总线程池或等待阶段资源名额时显示“排队等待”；只有实际获得执行名额后才显示“执行中”。
+
 识别参数：
 
 | Make 参数 | 默认值 | 推荐与说明 |
@@ -1036,6 +1047,8 @@ curl http://127.0.0.1:8000/api/jobs/staged \
   - `pdf2zh_bing_mono` / `pdf2zh_bing_dual`：PDFMathTranslate 高保真，
     Bing 免 Key，输出纯译文或分页双语 PDF。分页双语通常是原文页和译文页分开，
     不等同于同页左右对照；
+  - `pdf2zh_bing_facing`：复用 PDFMathTranslate 的分页双语结果，把每对页面
+    无损合成同一张宽页，左侧原文、右侧中文；适合大书快速生成左右分页版；
   - `pdf2zh_google_mono` / `pdf2zh_google_dual`：PDFMathTranslate 高保真，
     Google 免 Key，适合和 Bing 输出对比；
   - `babeldoc_bing_mono` / `babeldoc_bing_dual`：BabelDOC 后端，高保真
@@ -1060,7 +1073,8 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 
 论文建议使用 PDF；EPUB 只支持 `translated_only` 和 `bilingual`。对
 `Attention Is All You Need` 这类公式、图表、双栏论文，如果只要译文优先试
-`pdf2zh_bing_mono`；如果要原文和译文同页左右对照，优先试
+`pdf2zh_bing_mono`；如果要快速得到左原文、右译文，选
+`pdf2zh_bing_facing`；如果希望专业引擎原生重排左右对照，再试
 `babeldoc_bing_dual`。
 专业 PDF 模式会绕过项目内置 `blocks.json` 翻译缓存，由 PDFMathTranslate /
 BabelDOC 自行解析、翻译和重排，这样才能尽量保留公式、图、表和原 PDF 版式。
@@ -1394,9 +1408,9 @@ PDF / 论文翻译开源引擎调研：
 2. 抽取后打开 `blocks.json`，抽查章节顺序、页码和原文；
 3. 翻译中途停止一次，再继续，确认已完成块没有重新翻译；
 4. 普通书籍用 `translated_only` / `bilingual` 各排一次；
-5. 论文需要原文+译文并排时先用 `babeldoc_bing_dual`；只看译文时再用
-   `pdf2zh_bing_mono`；确实想要原文页/译文页分开的分页双语时再试
-   `pdf2zh_bing_dual`；
+5. 论文需要原文+译文并排时，大书优先用 `pdf2zh_bing_facing`，原生重排可用
+   `babeldoc_bing_dual`；只看译文时用 `pdf2zh_bing_mono`；确实想要原文页/
+   译文页前后交替时再用 `pdf2zh_bing_dual`；
 6. EPUB 用 Apple Books/Calibre 检查目录跳转、图片和段落；PDF 用预览检查目录、
    页数、图片、中文字体、溢出警告和至少每章一页的译文准确度。
 

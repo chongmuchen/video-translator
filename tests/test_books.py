@@ -11,7 +11,10 @@ from video_translator.books.models import BookBlock, BookStatus
 from video_translator.books.pdf import extract_pdf, render_pdf
 from video_translator.books.pipeline import BookTranslationPipeline
 from video_translator.books import professional_pdf
-from video_translator.books.professional_pdf import render_professional_pdf
+from video_translator.books.professional_pdf import (
+    create_facing_pdf,
+    render_professional_pdf,
+)
 from video_translator.books.store import BookStore
 from video_translator.settings import Settings
 
@@ -401,6 +404,37 @@ def test_professional_pdf_pins_compatible_tencent_tmt(
     assert captured[with_index + 2] == "pdf2zh"
     thread_index = captured.index("-t")
     assert captured[thread_index + 1] == "4"
+
+
+def test_create_facing_pdf_pairs_original_and_translation(
+    tmp_path: Path,
+) -> None:
+    alternating = tmp_path / "alternating.pdf"
+    document = pymupdf.open()
+    original = document.new_page(width=200, height=300)
+    original.insert_text((20, 40), "Original page")
+    translated = document.new_page(width=200, height=300)
+    translated.insert_text((20, 40), "Translated page")
+    document.set_toc(
+        [[1, "Original", 1], [1, "Translation", 2]]
+    )
+    document.save(alternating)
+    document.close()
+
+    output = tmp_path / "facing.pdf"
+    create_facing_pdf(alternating, output)
+
+    result = pymupdf.open(output)
+    try:
+        assert result.page_count == 1
+        assert result[0].rect.width == 418
+        assert result[0].rect.height == 300
+        text = result[0].get_text()
+        assert "Original page" in text
+        assert "Translated page" in text
+        assert {entry[2] for entry in result.get_toc()} == {1}
+    finally:
+        result.close()
 
 
 def test_book_extract_auto_ocr_when_pdf_has_no_text(

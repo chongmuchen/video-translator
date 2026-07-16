@@ -116,7 +116,12 @@ class Settings(BaseSettings):
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    worker_count: int = 1
+    # Independent video jobs can share the process, while expensive stages
+    # are constrained separately by JobManager's resource slots.
+    worker_count: int = 3
+    asr_worker_count: int = 1
+    translation_worker_count: int = 2
+    media_worker_count: int = 2
     require_content_authorization: bool = False
     max_jobs_per_day: int = 0
 

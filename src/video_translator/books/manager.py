@@ -7,6 +7,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from ..control import clear_cancel_request, mark_canceled, request_cancel
+from ..errors import PipelineCanceled
 from ..settings import Settings
 from ..task_queue import LocalTaskQueue
 from .models import BookManifest, BookStep, BookStepRequest
@@ -27,10 +28,20 @@ class BookManager:
         self._futures: dict[str, Future[BookManifest]] = {}
         self._lock = threading.Lock()
 
-    def is_running(self, book_id: str) -> bool:
+    def execution_state(self, book_id: str) -> str | None:
+        with self._lock:
+            future = self._futures.get(book_id)
+            if future is None or future.done():
+                return None
+            return "running" if future.running() else "queued"
+
+    def is_active(self, book_id: str) -> bool:
         with self._lock:
             future = self._futures.get(book_id)
             return future is not None and not future.done()
+
+    def is_running(self, book_id: str) -> bool:
+        return self.execution_state(book_id) == "running"
 
     def _pipeline(self, settings: Settings | None) -> BookTranslationPipeline:
         return BookTranslationPipeline(
@@ -63,6 +74,9 @@ class BookManager:
                 self.queue.mark(task_id, "running")
                 try:
                     result = function()
+                except PipelineCanceled as exc:
+                    self.queue.mark(task_id, "canceled", str(exc))
+                    raise
                 except Exception as exc:
                     self.queue.mark(task_id, "failed", str(exc))
                     raise
@@ -72,7 +86,7 @@ class BookManager:
             future = self.executor.submit(run)
             self._futures[manifest.id] = future
         future.add_done_callback(
-            lambda done: self._forget(manifest.id, done)
+            lambda done: self._forget(manifest.id, done, task_id)
         )
         return manifest
 
@@ -175,7 +189,7 @@ class BookManager:
             future = self._futures.get(book_id)
             if future is None or future.done():
                 return manifest
-            queued = future.cancel()
+        queued = future.cancel()
         if queued:
             return mark_canceled(manifest, self.store)
         return request_cancel(manifest, self.store)
@@ -184,7 +198,10 @@ class BookManager:
         self,
         book_id: str,
         future: Future[BookManifest],
+        task_id: str,
     ) -> None:
+        if future.cancelled():
+            self.queue.mark(task_id, "canceled")
         with self._lock:
             if self._futures.get(book_id) is future:
                 self._futures.pop(book_id, None)

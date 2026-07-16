@@ -128,6 +128,23 @@
       color: #17261f;
     }
     .job-list { display: grid; gap: 8px; }
+    .job-group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 10px 4px 1px;
+      color: #8fa398;
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .job-group-title:first-child { margin-top: 0; }
+    .job-group-title b {
+      color: #b9c8c0;
+      font-size: 10px;
+      font-weight: 800;
+    }
     .job-item {
       width: 100%;
       border: 1px solid transparent;
@@ -936,6 +953,7 @@
                   <optgroup label="专业论文 PDF 高保真（无本页OCR · 需文字层PDF）">
                     <option value="pdf2zh_bing_mono">PDFMathTranslate · Bing免Key · 纯译文 · 无OCR</option>
                     <option value="pdf2zh_bing_dual">PDFMathTranslate · Bing免Key · 分页双语 · 无OCR</option>
+                    <option value="pdf2zh_bing_facing">PDFMathTranslate · Bing免Key · 左右分页（左原文·右译文） · 无OCR</option>
                     <option value="pdf2zh_google_mono">PDFMathTranslate · Google免Key · 纯译文 · 无OCR</option>
                     <option value="pdf2zh_google_dual">PDFMathTranslate · Google免Key · 分页双语 · 无OCR</option>
                     <option value="babeldoc_bing_mono">BabelDOC · Bing免Key · 纯译文 · 无OCR</option>
@@ -969,7 +987,7 @@
                     <option value="paper_reflow">内置草稿：新文章式重排左右对照 · 支持OCR</option>
                   </optgroup>
                 </select>
-                <p class="help">想要原文和译文同页左右排版，选 BabelDOC · 左右对照。PDFMathTranslate 的“分页双语”通常会把原文页和译文页拆成多页。OCR 配置只作用于“支持OCR”的内置模式。</p>
+                <p class="help">“分页双语”是原文页、译文页前后交替；“左右分页”会把每一对页面合成同一张宽页，左边原文、右边中文；BabelDOC“左右对照”则由专业引擎原生重排。OCR 配置只作用于“支持OCR”的内置模式。</p>
               </div>
               <div class="field">
                 <label for="book-target">目标语言</label>
@@ -1760,13 +1778,26 @@
       second.stop(start + 0.55);
     }
 
+    function taskExecutionState(item) {
+      if (item?.execution_state === "running") return "running";
+      if (item?.execution_state === "queued") return "queued";
+      if (item?.queued) return "queued";
+      if (item?.running) return "running";
+      return null;
+    }
+
+    function isTaskActive(item) {
+      return Boolean(item?.active || taskExecutionState(item));
+    }
+
     function maybePlayCompletion(kind, item) {
       const key = `${kind}:${item.id}`;
       const previous = state.runStates.get(key);
+      const active = isTaskActive(item);
       const completed = kind === "book"
         ? item.status === "rendered"
         : item.status === "completed";
-      if (previous?.running && !item.running && completed) {
+      if (previous?.active && !active && completed) {
         playCompletionSound();
         notify(
           kind === "book"
@@ -1777,7 +1808,7 @@
         );
       }
       state.runStates.set(key, {
-        running: Boolean(item.running),
+        active,
         status: item.status,
       });
     }
@@ -1793,7 +1824,10 @@
     }
 
     function statusLabel(job) {
-      if (job.running) return "执行中";
+      const executionState = taskExecutionState(job);
+      if (executionState === "queued") return "排队等待";
+      if (executionState === "running") return "执行中";
+      if (job.error || job.status === "failed") return "失败，可继续";
       if ([
         "downloading", "extracting", "transcribing", "translating",
         "synthesizing", "aligning", "muxing"
@@ -1803,7 +1837,8 @@
       const labels = {
         queued: "等待下载", downloaded: "已下载", extracted: "已抽取",
         transcribed: "已识别", translated: "已翻译", synthesized: "已配音",
-        aligned: "已对齐", completed: "已完成", failed: "失败，可继续"
+        aligned: "已对齐", completed: "已完成", canceled: "已取消，可继续",
+        failed: "失败，可继续"
       };
       return labels[job.status] || job.status;
     }
@@ -1837,8 +1872,8 @@
     }
 
     function stepExecutionNote(job, definition, flags) {
-      if (job.running) {
-        return "当前有步骤正在执行，新的步骤会暂时禁用，避免两个后台进程同时写同一个任务目录。";
+      if (isTaskActive(job)) {
+        return "当前任务正在执行或排队，新的步骤会暂时禁用，避免两个后台进程同时写同一个任务目录。";
       }
       if (!flags.previousComplete) {
         return "这个步骤依赖前一步产物，必须先完成前一步。";
@@ -1860,8 +1895,8 @@
       const next = job.next_step
         ? stepDefinitions.find(step => step.id === job.next_step)?.name
         : null;
-      const text = job.running
-        ? "任务正在后台执行。此时修改页面参数不会影响正在运行的进程；要等当前步骤结束后，再提交下一步。"
+      const text = isTaskActive(job)
+        ? "任务正在后台执行或等待资源名额。此时修改页面参数不会影响已经提交的任务；要等当前任务结束后，再提交下一步。"
         : next
           ? `继续执行会从“${next}”开始；已经完成的前置步骤会复用本地文件。勾选某一步的“强制重跑”才会从那一步开始清空后续状态并重试。`
           : "任务已完成。只有在某一步勾选“强制重跑”时，才会重新生成该步骤和后续产物。";
@@ -1956,6 +1991,27 @@
         );
     }
 
+    function historyStateGroup(item) {
+      const executionState = taskExecutionState(item.raw);
+      if (executionState === "running") return "running";
+      if (executionState === "queued") return "queued";
+      if (item.raw?.error || item.raw?.status === "failed") return "failed";
+      if (item.raw?.status === "canceled") return "interrupted";
+      const interrupted = item.kind === "book"
+        ? ["translating"]
+        : item.kind === "paper_podcast"
+          ? ["extracting", "scripting", "synthesizing"]
+          : [
+              "downloading", "extracting", "transcribing", "translating",
+              "synthesizing", "aligning", "muxing"
+            ];
+      if (interrupted.includes(item.raw?.status)) return "interrupted";
+      const completed = item.kind === "book"
+        ? item.raw?.status === "rendered"
+        : item.raw?.status === "completed";
+      return completed ? "completed" : "ready";
+    }
+
     function renderJobs() {
       const list = $("#job-list");
       list.replaceChildren();
@@ -1976,38 +2032,60 @@
         list.append(empty);
         return;
       }
-      items.forEach(item => {
-        const button = document.createElement("button");
-        button.className =
-          `job-item${
-            state.selected?.id === item.id &&
-            state.selectedKind === item.kind
-              ? " active"
-              : ""
-          }`;
-        const title = document.createElement("strong");
-        title.textContent = item.title;
-        const meta = document.createElement("span");
-        const status = document.createElement("em");
-        status.style.fontStyle = "normal";
-        const type = document.createElement("b");
-        type.className = "job-type";
-        type.textContent = historyKindLabel(item.kind);
-        status.append(type, document.createTextNode(item.status));
-        const id = document.createElement("code");
-        id.textContent = item.id.slice(0, 8);
-        meta.append(status, id);
-        button.append(title, meta);
-        button.addEventListener(
-          "click",
-          () => item.kind === "book"
-            ? selectBook(item.id)
-            : item.kind === "paper_podcast"
-              ? selectPaperPodcast(item.id)
-              : selectJob(item.id)
+      const groups = [
+        ["running", "执行中"],
+        ["queued", "排队等待"],
+        ["failed", "失败"],
+        ["interrupted", "已中断 / 已取消"],
+        ["ready", "等待操作"],
+        ["completed", "已完成"],
+      ];
+      for (const [group, label] of groups) {
+        const groupedItems = items.filter(
+          item => historyStateGroup(item) === group
         );
-        list.append(button);
-      });
+        if (!groupedItems.length) continue;
+        const heading = document.createElement("div");
+        heading.className = "job-group-title";
+        const headingLabel = document.createElement("span");
+        headingLabel.textContent = label;
+        const count = document.createElement("b");
+        count.textContent = groupedItems.length;
+        heading.append(headingLabel, count);
+        list.append(heading);
+        for (const item of groupedItems) {
+          const button = document.createElement("button");
+          button.className =
+            `job-item${
+              state.selected?.id === item.id &&
+              state.selectedKind === item.kind
+                ? " active"
+                : ""
+            }`;
+          const title = document.createElement("strong");
+          title.textContent = item.title;
+          const meta = document.createElement("span");
+          const status = document.createElement("em");
+          status.style.fontStyle = "normal";
+          const type = document.createElement("b");
+          type.className = "job-type";
+          type.textContent = historyKindLabel(item.kind);
+          status.append(type, document.createTextNode(item.status));
+          const id = document.createElement("code");
+          id.textContent = item.id.slice(0, 8);
+          meta.append(status, id);
+          button.append(title, meta);
+          button.addEventListener(
+            "click",
+            () => item.kind === "book"
+              ? selectBook(item.id)
+              : item.kind === "paper_podcast"
+                ? selectPaperPodcast(item.id)
+                : selectJob(item.id)
+          );
+          list.append(button);
+        }
+      }
     }
 
     function fieldElement(definition, stepId, job) {
@@ -2231,7 +2309,7 @@
         run.type = "button";
         run.className = "step-run";
         run.textContent = isComplete ? "重新执行此步骤" : "执行此步骤";
-        run.disabled = job.running || !previousComplete;
+        run.disabled = isTaskActive(job) || !previousComplete;
         const forceWrap = document.createElement("label");
         forceWrap.className = "force-row";
         const force = document.createElement("input");
@@ -2295,7 +2373,7 @@
     function renderJobActions(job) {
       const box = $("#job-actions");
       box.replaceChildren();
-      if (job.running || job.cancel_requested) {
+      if (isTaskActive(job) || job.cancel_requested) {
         const cancel = document.createElement("button");
         cancel.type = "button";
         cancel.className = "secondary danger";
@@ -2518,7 +2596,9 @@
     }
 
     function bookStatus(book) {
-      if (book.running) return "执行中";
+      const executionState = taskExecutionState(book);
+      if (executionState === "queued") return "排队等待";
+      if (executionState === "running") return "执行中";
       if (book.error) return "失败，可继续";
       if (book.status === "translating") return "已中断，可继续";
       const labels = {
@@ -2527,13 +2607,16 @@
         translating: "翻译中",
         translated: "已翻译",
         rendered: "已排版",
+        canceled: "已取消，可继续",
         failed: "失败",
       };
       return labels[book.status] || book.status;
     }
 
     function paperPodcastStatus(podcast) {
-      if (podcast.running) return "执行中";
+      const executionState = taskExecutionState(podcast);
+      if (executionState === "queued") return "排队等待";
+      if (executionState === "running") return "执行中";
       if (podcast.error) return "失败，可继续";
       if (["extracting", "scripting", "synthesizing"].includes(podcast.status)) {
         return "已中断，可继续";
@@ -2543,6 +2626,7 @@
         extracted: "已抽取",
         scripted: "已生成脚本",
         completed: "已完成",
+        canceled: "已取消，可继续",
         failed: "失败",
       };
       return labels[podcast.status] || podcast.status;
@@ -2657,7 +2741,7 @@
           button.textContent = completed.has(step)
             ? `${label}（重跑）`
             : label;
-          button.disabled = podcast.running || !ready;
+          button.disabled = isTaskActive(podcast) || !ready;
           button.addEventListener(
             "click",
             () => runPaperPodcast(podcast.id, `steps/${step}`)
@@ -2668,13 +2752,13 @@
         all.type = "button";
         all.className = "primary";
         all.textContent = "继续完成全部";
-        all.disabled = podcast.running;
+        all.disabled = isTaskActive(podcast);
         all.addEventListener(
           "click",
           () => runPaperPodcast(podcast.id, "run")
         );
         actions.append(all);
-        if (podcast.running || podcast.cancel_requested) {
+        if (isTaskActive(podcast) || podcast.cancel_requested) {
           const cancel = document.createElement("button");
           cancel.type = "button";
           cancel.className = "secondary danger";
@@ -2733,8 +2817,8 @@
         synthesize.clips ? `音频片段：${synthesize.clips}` : "音频片段：未生成",
       ].filter(Boolean).join(" · ");
       const policy = document.createElement("p");
-      policy.textContent = podcast.running
-        ? "论文播客任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
+      policy.textContent = isTaskActive(podcast)
+        ? "论文播客任务正在后台执行或排队。此时修改页面参数不会影响已经提交的后台任务。"
         : "点“继续完成全部”会从缺失步骤继续；已抽取文本会复用；脚本会按目标语言、模型、风格、时长和术语表缓存；音频可单独重跑以更换音色。";
       box.append(title, summary, policy);
       const paths = podcast.artifact_paths || {};
@@ -2854,6 +2938,7 @@
       paper_reflow: "论文排版·新文章式重排·OCR",
       pdf2zh_bing_mono: "PDFMathTranslate·Bing·纯译文·无OCR",
       pdf2zh_bing_dual: "PDFMathTranslate·Bing·分页双语·无OCR",
+      pdf2zh_bing_facing: "PDFMathTranslate·Bing·左右分页·无OCR",
       pdf2zh_google_mono: "PDFMathTranslate·Google·纯译文·无OCR",
       pdf2zh_google_dual: "PDFMathTranslate·Google·分页双语·无OCR",
       pdf2zh_openailiked_mono: "PDFMathTranslate·OpenAI-compatible/Kimi等·纯译文·无OCR",
@@ -2901,6 +2986,7 @@
       return [
         "pdf2zh_bing_mono",
         "pdf2zh_bing_dual",
+        "pdf2zh_bing_facing",
         "pdf2zh_google_mono",
         "pdf2zh_google_dual",
         "babeldoc_bing_mono",
@@ -2993,7 +3079,7 @@
           button.textContent = completed.has(step)
             ? `${label}（重跑）`
             : label;
-          button.disabled = book.running || !ready;
+          button.disabled = isTaskActive(book) || !ready;
           button.addEventListener(
             "click",
             () => runBook(book.id, `steps/${step}`)
@@ -3004,10 +3090,10 @@
         all.type = "button";
         all.className = "primary";
         all.textContent = "继续完成全部";
-        all.disabled = book.running;
+        all.disabled = isTaskActive(book);
         all.addEventListener("click", () => runBook(book.id, "run"));
         actions.append(all);
-        if (book.running || book.cancel_requested) {
+        if (isTaskActive(book) || book.cancel_requested) {
           const cancel = document.createElement("button");
           cancel.type = "button";
           cancel.className = "secondary danger";
@@ -3061,8 +3147,8 @@
           : "排版警告：0 个",
       ].join(" · ");
       const policy = document.createElement("p");
-      policy.textContent = book.running
-        ? "书籍任务正在后台执行。此时修改页面参数不会影响已经启动的后台进程。"
+      policy.textContent = isTaskActive(book)
+        ? "书籍任务正在后台执行或排队。此时修改页面参数不会影响已经提交的后台任务。"
         : "点“继续完成全部”会从缺失步骤继续：已抽取文本会复用；翻译会按目标语言、模型、策略和术语表的缓存键跳过未变化块；排版会重新生成输出文件。";
       const library = book.library || {};
       const libraryEditor = document.createElement("div");
@@ -3209,7 +3295,7 @@
       rerenderButton.textContent = "用所选模式重新排版";
       const syncRerenderButton = () => {
         const translated = (book.completed_steps || []).includes("translate");
-        rerenderButton.disabled = book.running || (
+        rerenderButton.disabled = isTaskActive(book) || (
           !translated && !isProfessionalBookMode(modeSelect.value)
         );
       };
@@ -3445,7 +3531,7 @@
           select.type = "checkbox";
           select.className = "segment-select";
           select.value = item.index;
-          select.disabled = Boolean(state.selected?.running);
+          select.disabled = isTaskActive(state.selected);
           const time = document.createElement("time");
           time.textContent = `${seconds(item.start)} → ${seconds(item.end)}`;
           const text = document.createElement("div");
@@ -3465,7 +3551,7 @@
           const book = await api(`/api/books/${state.selected.id}`);
           updateBook(book);
           await refreshBooks();
-          const desiredDelay = book.running ? 4000 : 15000;
+          const desiredDelay = isTaskActive(book) ? 4000 : 15000;
           if (desiredDelay !== state.pollDelay) startPolling();
           return;
         }
@@ -3475,7 +3561,7 @@
           );
           updatePaperPodcast(podcast);
           await refreshPaperPodcasts();
-          const desiredDelay = podcast.running ? 4000 : 15000;
+          const desiredDelay = isTaskActive(podcast) ? 4000 : 15000;
           if (desiredDelay !== state.pollDelay) startPolling();
           return;
         }
@@ -3484,7 +3570,7 @@
         await loadLog();
         if (job.artifacts?.segments) await loadTranscript();
         await refreshJobs();
-        const desiredDelay = job.running ? 2200 : 15000;
+        const desiredDelay = isTaskActive(job) ? 2200 : 15000;
         if (desiredDelay !== state.pollDelay) startPolling();
       } catch (error) {
         notify(error.message, true);
@@ -3494,7 +3580,7 @@
     function startPolling(immediate = false) {
       clearInterval(state.timer);
       if (immediate) setTimeout(pollOnce, 450);
-      state.pollDelay = state.selected?.running ? 2200 : 15000;
+      state.pollDelay = isTaskActive(state.selected) ? 2200 : 15000;
       state.timer = setInterval(pollOnce, state.pollDelay);
     }
 

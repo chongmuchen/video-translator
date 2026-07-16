@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 
+import pymupdf
+
 from ..errors import ConfigurationError, PipelineError
 from ..settings import Settings
 
@@ -42,6 +44,11 @@ PROFESSIONAL_PDF_MODES: dict[str, ProfessionalPdfMode] = {
     for service in _SERVICES
     for variant in ("mono", "dual")
 }
+PROFESSIONAL_PDF_MODES["pdf2zh_bing_facing"] = ProfessionalPdfMode(
+    engine="pdf2zh",
+    service="bing",
+    variant="facing",
+)
 
 PROFESSIONAL_PDF_OUTPUT_MODES = set(PROFESSIONAL_PDF_MODES)
 
@@ -261,6 +268,89 @@ def _copy_if_available(source: Path, output: Path) -> None:
     shutil.copy2(source, output)
 
 
+def create_facing_pdf(
+    alternating_pdf: Path,
+    output: Path,
+    *,
+    gutter: float = 18.0,
+) -> Path:
+    """Combine alternating original/translation pages into wide spreads."""
+    source = pymupdf.open(alternating_pdf)
+    target = pymupdf.open()
+    temporary = output.with_name(f".{output.stem}.tmp.pdf")
+    try:
+        if source.page_count == 0 or source.page_count % 2:
+            raise PipelineError(
+                "左右分页需要偶数页的分页双语 PDF（原文页、译文页成对）。"
+            )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary.unlink(missing_ok=True)
+
+        for index in range(0, source.page_count, 2):
+            left = source[index]
+            right = source[index + 1]
+            left_rect = left.rect
+            right_rect = right.rect
+            height = max(left_rect.height, right_rect.height)
+            width = left_rect.width + gutter + right_rect.width
+            spread = target.new_page(width=width, height=height)
+            spread.draw_rect(
+                spread.rect,
+                color=None,
+                fill=(1, 1, 1),
+                overlay=False,
+            )
+            spread.show_pdf_page(
+                pymupdf.Rect(0, 0, left_rect.width, left_rect.height),
+                source,
+                index,
+            )
+            right_x = left_rect.width + gutter
+            spread.show_pdf_page(
+                pymupdf.Rect(
+                    right_x,
+                    0,
+                    right_x + right_rect.width,
+                    right_rect.height,
+                ),
+                source,
+                index + 1,
+            )
+            spread.draw_line(
+                (left_rect.width + gutter / 2, 24),
+                (left_rect.width + gutter / 2, height - 24),
+                color=(0.78, 0.78, 0.78),
+                width=0.4,
+                overlay=True,
+            )
+
+        metadata = source.metadata
+        if metadata:
+            target.set_metadata(metadata)
+        toc = source.get_toc(simple=True)
+        if toc:
+            adjusted_toc = []
+            for entry in toc:
+                adjusted = list(entry)
+                if len(adjusted) >= 3 and adjusted[2] > 0:
+                    adjusted[2] = (adjusted[2] + 1) // 2
+                adjusted_toc.append(adjusted)
+            target.set_toc(adjusted_toc)
+
+        target.save(
+            temporary,
+            garbage=4,
+            clean=True,
+            deflate=True,
+        )
+        temporary.replace(output)
+        return output
+    finally:
+        target.close()
+        source.close()
+        temporary.unlink(missing_ok=True)
+
+
 def _process_text(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -370,7 +460,8 @@ def render_professional_pdf(
     log_path.write_text(log_text, encoding="utf-8")
 
     outputs = _find_outputs(run_dir, source.stem)
-    if result.returncode != 0 or spec.variant not in outputs:
+    engine_variant = "dual" if spec.variant == "facing" else spec.variant
+    if result.returncode != 0 or engine_variant not in outputs:
         detail = _safe_tail(log_text)
         raise PipelineError(
             "专业 PDF 引擎没有生成可用输出。"
@@ -379,17 +470,30 @@ def render_professional_pdf(
 
     generated: dict[str, str] = {}
     selected_mode = spec.with_variant(spec.variant)
-    sibling_mode = spec.with_variant(spec.sibling_variant)
     selected_path = selected_output
-    _copy_if_available(outputs[spec.variant], selected_path)
-    generated[selected_mode] = str(selected_path)
+    if spec.variant == "facing":
+        create_facing_pdf(outputs["dual"], selected_path)
+        generated[selected_mode] = str(selected_path)
+        for raw_variant in ("mono", "dual"):
+            if raw_variant not in outputs:
+                continue
+            raw_mode = spec.with_variant(raw_variant)
+            raw_output = outputs_dir / (
+                f"{title}-zh-{raw_mode}-{book_id[:8]}.pdf"
+            )
+            _copy_if_available(outputs[raw_variant], raw_output)
+            generated[raw_mode] = str(raw_output)
+    else:
+        sibling_mode = spec.with_variant(spec.sibling_variant)
+        _copy_if_available(outputs[spec.variant], selected_path)
+        generated[selected_mode] = str(selected_path)
 
-    if spec.sibling_variant in outputs:
-        sibling_output = outputs_dir / (
-            f"{title}-zh-{sibling_mode}-{book_id[:8]}.pdf"
-        )
-        _copy_if_available(outputs[spec.sibling_variant], sibling_output)
-        generated[sibling_mode] = str(sibling_output)
+        if spec.sibling_variant in outputs:
+            sibling_output = outputs_dir / (
+                f"{title}-zh-{sibling_mode}-{book_id[:8]}.pdf"
+            )
+            _copy_if_available(outputs[spec.sibling_variant], sibling_output)
+            generated[sibling_mode] = str(sibling_output)
 
     warnings = [
         (
@@ -402,5 +506,10 @@ def render_professional_pdf(
         warnings.append(
             "BabelDOC 后端已启用 NumPy 2 兼容层；若遇到上游版本变更，"
             "请检查 professional-pdf 日志。"
+        )
+    if spec.variant == "facing":
+        warnings.append(
+            "已把分页双语 PDF 按原文页/译文页成对合并："
+            "每张宽页左侧为原文，右侧为中文，并保留矢量文字与公式。"
         )
     return selected_path, warnings, generated, str(log_path)

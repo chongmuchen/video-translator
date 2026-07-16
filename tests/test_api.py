@@ -32,6 +32,8 @@ def test_local_console_lists_and_creates_staged_job(
         page = client.get("/")
         assert page.status_code == 200
         assert "本地流水线控制台" in page.text
+        assert "排队等待" in page.text
+        assert "job-group-title" in page.text
 
         response = client.post(
             "/api/jobs/staged",
@@ -57,6 +59,41 @@ def test_local_console_lists_and_creates_staged_job(
 
         jobs = client.get("/api/jobs").json()
         assert [job["id"] for job in jobs] == [created["id"]]
+
+
+def test_job_payload_distinguishes_queued_from_running(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    manifest = manager.store.create(
+        "https://youtu.be/example",
+        PipelineOptions(),
+    )
+
+    monkeypatch.setattr(
+        manager,
+        "execution_state",
+        lambda job_id: "queued",
+    )
+    with TestClient(app) as client:
+        queued = client.get(f"/api/jobs/{manifest.id}").json()
+        assert queued["execution_state"] == "queued"
+        assert queued["queued"] is True
+        assert queued["running"] is False
+        assert queued["active"] is True
+
+        monkeypatch.setattr(
+            manager,
+            "execution_state",
+            lambda job_id: "running",
+        )
+        running = client.get(f"/api/jobs/{manifest.id}").json()
+        assert running["execution_state"] == "running"
+        assert running["queued"] is False
+        assert running["running"] is True
+        assert running["active"] is True
 
 
 def test_step_endpoint_updates_options_and_runtime_settings(

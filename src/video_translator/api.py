@@ -114,6 +114,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> None:
         manifest.metadata.update(authorization_metadata(authorization))
 
+    def apply_execution_state(payload: dict, execution_state: str | None) -> None:
+        payload["execution_state"] = execution_state
+        payload["running"] = execution_state == "running"
+        payload["queued"] = execution_state == "queued"
+        payload["active"] = execution_state is not None
+
     def job_payload(manifest: JobManifest) -> dict:
         payload = manifest.public_dict()
         job_dir = manager.store.job_dir(manifest.id)
@@ -121,7 +127,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload["directory_path"] = str(job_dir)
         payload["manifest_path"] = str(job_dir / "manifest.json")
         payload["log_path"] = str(job_dir / "pipeline.log")
-        payload["running"] = manager.is_running(manifest.id)
+        apply_execution_state(
+            payload,
+            manager.execution_state(manifest.id),
+        )
         payload["cancel_requested"] = bool(
             manifest.metadata.get("cancel_requested")
         )
@@ -438,7 +447,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if value and Path(value).is_file():
                     professional_logs[str(mode)] = str(Path(value))
         payload["professional_pdf_logs"] = professional_logs
-        payload["running"] = book_manager.is_running(manifest.id)
+        apply_execution_state(
+            payload,
+            book_manager.execution_state(manifest.id),
+        )
         payload["cancel_requested"] = bool(
             manifest.metadata.get("cancel_requested")
         )
@@ -532,7 +544,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if value and Path(value).is_file():
                 artifact_paths[key] = str(Path(value))
         payload["artifact_paths"] = artifact_paths
-        payload["running"] = paper_podcast_manager.is_running(manifest.id)
+        apply_execution_state(
+            payload,
+            paper_podcast_manager.execution_state(manifest.id),
+        )
         payload["cancel_requested"] = bool(
             manifest.metadata.get("cancel_requested")
         )
@@ -1317,7 +1332,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         http_request: Request,
         delete_outputs: bool = True,
     ) -> dict:
-        if manager.is_running(job_id):
+        if manager.is_active(job_id):
             raise HTTPException(status_code=409, detail="任务正在执行，不能删除。")
         try:
             removed = manager.store.delete(
@@ -1344,7 +1359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         http_request: Request,
         delete_outputs: bool = True,
     ) -> dict:
-        if book_manager.is_running(book_id):
+        if book_manager.is_active(book_id):
             raise HTTPException(
                 status_code=409,
                 detail="书籍任务正在执行，不能删除。",
@@ -1374,7 +1389,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         http_request: Request,
         delete_outputs: bool = True,
     ) -> dict:
-        if paper_podcast_manager.is_running(podcast_id):
+        if paper_podcast_manager.is_active(podcast_id):
             raise HTTPException(
                 status_code=409,
                 detail="论文播客任务正在执行，不能删除。",
@@ -1413,7 +1428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         try:
             manifest = manager.store.get(job_id)
-            if manager.is_running(job_id):
+            if manager.is_active(job_id):
                 raise HTTPException(
                     status_code=409,
                     detail="任务正在执行，请等待当前步骤完成。",
@@ -1495,7 +1510,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         try:
             manifest = manager.store.get(job_id)
-            if manager.is_running(job_id):
+            if manager.is_active(job_id):
                 raise HTTPException(
                     status_code=409,
                     detail="任务正在执行，请等待当前步骤完成。",

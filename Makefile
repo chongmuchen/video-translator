@@ -195,7 +195,7 @@ help:
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=babeldoc_bing_mono"
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=paper_translated_reflow"
 	@echo "  make book-render BOOK_ID='任务ID' BOOK_MODE=paper_bilingual_stacked"
-	@echo "  专业 PDF 模式优先在网页选择；推荐 pdf2zh_bing_mono / pdf2zh_bing_dual。"
+	@echo "  专业 PDF 模式优先在网页选择；左右分页推荐 pdf2zh_bing_facing。"
 	@echo
 	@echo "论文讲解播客："
 	@echo "  make paper-podcast-run PAPER_FILE='/path/paper.pdf'"

@@ -21,6 +21,7 @@ BookOutputMode = Literal[
     "paper_bilingual_stacked",
     "pdf2zh_bing_mono",
     "pdf2zh_bing_dual",
+    "pdf2zh_bing_facing",
     "pdf2zh_google_mono",
     "pdf2zh_google_dual",
     "pdf2zh_openailiked_mono",
