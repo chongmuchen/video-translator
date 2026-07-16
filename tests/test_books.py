@@ -437,6 +437,77 @@ def test_create_facing_pdf_pairs_original_and_translation(
         result.close()
 
 
+def test_professional_facing_reuses_existing_dual(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source.pdf"
+    source_document = pymupdf.open()
+    source_document.new_page(width=200, height=300)
+    source_document.save(source)
+    source_document.close()
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        translator_provider="passthrough",
+    )
+    job_dir = tmp_path / "job"
+    outputs_dir = tmp_path / "outputs"
+    job_dir.mkdir()
+    outputs_dir.mkdir()
+    book_id = "1234567890abcdef"
+    existing_dual = outputs_dir / (
+        f"Paper-zh-pdf2zh_bing_dual-{book_id[:8]}.pdf"
+    )
+    alternating = pymupdf.open()
+    for text in ("Original", "Translation"):
+        page = alternating.new_page(width=200, height=300)
+        page.insert_text((20, 40), text)
+    alternating.save(existing_dual)
+    alternating.close()
+
+    def unexpected_uv(_settings):
+        raise AssertionError("facing cache hit must not start pdf2zh")
+
+    monkeypatch.setattr(professional_pdf, "_uv_binary", unexpected_uv)
+    selected = outputs_dir / "facing.pdf"
+    path, warnings, generated, log_path = render_professional_pdf(
+        source,
+        selected,
+        mode="pdf2zh_bing_facing",
+        settings=settings,
+        job_dir=job_dir,
+        outputs_dir=outputs_dir,
+        title="Paper",
+        book_id=book_id,
+        target_language="简体中文",
+    )
+
+    assert path == selected
+    assert selected.is_file()
+    assert "未重新翻译" in " ".join(warnings)
+    assert generated["pdf2zh_bing_dual"] == str(existing_dual)
+    assert generated["pdf2zh_bing_facing"] == str(selected)
+    assert "Reused existing" in Path(log_path).read_text(encoding="utf-8")
+
+
+def test_create_facing_pdf_rejects_unpaired_pages(
+    tmp_path: Path,
+) -> None:
+    alternating = tmp_path / "odd.pdf"
+    document = pymupdf.open()
+    document.new_page(width=200, height=300)
+    document.save(alternating)
+    document.close()
+
+    try:
+        create_facing_pdf(alternating, tmp_path / "facing.pdf")
+    except PipelineError as exc:
+        assert "偶数页" in str(exc)
+    else:
+        raise AssertionError("expected PipelineError")
+
+
 def test_book_extract_auto_ocr_when_pdf_has_no_text(
     tmp_path: Path,
     monkeypatch,

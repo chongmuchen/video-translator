@@ -144,6 +144,76 @@ def test_step_endpoint_updates_options_and_runtime_settings(
         assert submitted["settings"].asr_model == "small.en"
 
 
+def test_step_retry_reuses_automated_job_settings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(
+        Settings(
+            data_dir=tmp_path / "data",
+            translator_provider="openai_compatible",
+            translator_base_url="http://127.0.0.1:11434/v1",
+        )
+    )
+    manager = app.state.manager
+    manifest = manager.store.create(
+        "https://youtu.be/example",
+        PipelineOptions(),
+    )
+    manifest.completed_steps = [
+        "download",
+        "extract",
+        "transcribe",
+        "translate",
+        "synthesize",
+    ]
+    manifest.status = JobStatus.failed
+    manifest.metadata["runtime_settings"] = {
+        "translator_provider": "codex_cli",
+        "translator_codex_strategy": "balanced",
+        "translator_timeout_seconds": 300,
+        "translation_batch_size": 48,
+        "max_tempo_factor": 1.8,
+    }
+    manager.store.save(manifest)
+    submitted = {}
+
+    def fake_submit_step(job_id, step, *, force=False, settings=None):
+        submitted.update(
+            {
+                "job_id": job_id,
+                "step": step,
+                "force": force,
+                "settings": settings,
+            }
+        )
+        return manager.store.get(job_id)
+
+    monkeypatch.setattr(manager, "submit_step", fake_submit_step)
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/jobs/{manifest.id}/steps/align",
+            json={
+                "force": False,
+                "options": {},
+                "settings": {"max_tempo_factor": 2.0},
+            },
+        )
+
+    assert response.status_code == 202
+    assert submitted["step"] == PipelineStep.align
+    assert submitted["settings"].translator_provider == "codex_cli"
+    assert submitted["settings"].translator_codex_strategy == "balanced"
+    assert submitted["settings"].translator_timeout_seconds == 300
+    assert submitted["settings"].translation_batch_size == 48
+    assert submitted["settings"].max_tempo_factor == 2.0
+    restored = manager.store.get(manifest.id)
+    assert restored.metadata["runtime_settings"]["translator_provider"] == (
+        "codex_cli"
+    )
+    assert restored.metadata["runtime_settings"]["max_tempo_factor"] == 2.0
+
+
 def test_automated_endpoint_runs_all_steps_with_one_settings_snapshot(
     tmp_path: Path,
     monkeypatch,
@@ -207,6 +277,7 @@ def test_automated_endpoint_runs_all_steps_with_one_settings_snapshot(
     assert restored.metadata["run_mode"] == "automated"
     assert restored.metadata["runtime_settings"]["asr_model"] == "small.en"
     assert "tts_http_api_key" not in restored.metadata["runtime_settings"]
+    assert restored.metadata["translator_api_key_ref"] == "c" * 32
 
 
 def test_api_key_template_uses_keychain_reference(

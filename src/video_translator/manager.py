@@ -70,7 +70,7 @@ class JobManager:
 
         if metadata:
             manifest.metadata.update(metadata)
-        clear_cancel_request(manifest)
+        clear_cancel_request(manifest, self.store)
         self.store.save(manifest)
         pipeline = (
             VideoTranslationPipeline(settings, self.store)
@@ -218,7 +218,7 @@ class JobManager:
                 raise RuntimeError("任务正在执行，请等待当前步骤完成。")
 
         manifest = self.store.get(job_id)
-        clear_cancel_request(manifest)
+        clear_cancel_request(manifest, self.store)
         self.store.save(manifest)
         pipeline = StepwiseVideoTranslationPipeline(
             settings or self.settings,
@@ -252,7 +252,7 @@ class JobManager:
                 raise RuntimeError("任务正在执行，请等待当前步骤完成。")
 
         manifest = self.store.get(job_id)
-        clear_cancel_request(manifest)
+        clear_cancel_request(manifest, self.store)
         self.store.save(manifest)
         pipeline = StepwiseVideoTranslationPipeline(
             settings or self.settings,

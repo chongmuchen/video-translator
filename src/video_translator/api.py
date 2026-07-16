@@ -20,6 +20,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from .cleanup import cleanup_intermediates
+from .control import cancellation_requested
 from .errors import InvalidSourceError, VideoTranslatorError
 from .governance import (
     AuditLog,
@@ -131,8 +132,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload,
             manager.execution_state(manifest.id),
         )
-        payload["cancel_requested"] = bool(
-            manifest.metadata.get("cancel_requested")
+        payload["cancel_requested"] = cancellation_requested(
+            manifest,
+            manager.store,
         )
         payload["next_step"] = next(
             (
@@ -273,11 +275,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
 
-    def settings_for(request_settings) -> Settings:
-        updates = request_settings.model_dump(exclude_none=True)
+    secret_runtime_setting_keys = {
+        "translator_api_key",
+        "tts_http_api_key",
+        "diarization_auth_token",
+    }
+
+    def safe_runtime_settings_snapshot(payload: dict | None) -> dict:
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            key: value
+            for key, value in payload.items()
+            if key in Settings.model_fields
+            and key not in secret_runtime_setting_keys
+            and value is not None
+        }
+
+    def remember_runtime_settings(
+        manifest: JobManifest,
+        request_settings,
+    ) -> None:
+        """Persist non-secret step settings for safe resume/retry.
+
+        A later stage may depend on an earlier stage provider settings. For
+        example, alignment can ask the translator to shorten overlong TTS
+        segments, so it must keep using the task Codex/API configuration.
+        """
+
+        updates = safe_runtime_settings_snapshot(
+            request_settings.model_dump(exclude_none=True)
+        )
+        if not updates:
+            return
+        saved = safe_runtime_settings_snapshot(
+            manifest.metadata.get("runtime_settings")
+        )
+        saved.update(updates)
+        manifest.metadata["runtime_settings"] = saved
+        manager.store.save(manifest)
+
+    def settings_for(
+        request_settings,
+        manifest: JobManifest | None = None,
+    ) -> Settings:
+        updates = safe_runtime_settings_snapshot(
+            manifest.metadata.get("runtime_settings")
+            if manifest is not None
+            else None
+        )
+        request_updates = request_settings.model_dump(exclude_none=True)
+        updates.update(request_updates)
         if updates.get("download_proxy") == "direct":
             updates["download_proxy"] = ""
-        return runtime_settings.model_copy(update=updates)
+        selected = runtime_settings.model_copy(update=updates)
+        if (
+            manifest is not None
+            and not request_updates.get("translator_api_key")
+            and manifest.metadata.get("translator_api_key_ref")
+        ):
+            selected = selected.model_copy(
+                update={
+                    "translator_api_key": secret_store.read(
+                        manifest.metadata["translator_api_key_ref"]
+                    )
+                }
+            )
+        return selected
 
     def settings_with_saved_key(
         request_settings,
@@ -451,8 +515,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload,
             book_manager.execution_state(manifest.id),
         )
-        payload["cancel_requested"] = bool(
-            manifest.metadata.get("cancel_requested")
+        payload["cancel_requested"] = cancellation_requested(
+            manifest,
+            book_manager.store,
         )
         payload["download_ready"] = bool(
             manifest.output_path
@@ -548,8 +613,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload,
             paper_podcast_manager.execution_state(manifest.id),
         )
-        payload["cancel_requested"] = bool(
-            manifest.metadata.get("cancel_requested")
+        payload["cancel_requested"] = cancellation_requested(
+            manifest,
+            paper_podcast_manager.store,
         )
         payload["download_ready"] = bool(
             manifest.audio_path and Path(manifest.audio_path).is_file()
@@ -1116,10 +1182,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             manifest = manager.create(validated, request.options)
             apply_authorization(manifest, request.authorization)
             manager.store.save(manifest)
+            remember_runtime_settings(manifest, request.settings)
             manager.submit_step(
                 manifest.id,
                 PipelineStep.download,
-                settings=settings_for(request.settings),
+                settings=settings_for(request.settings, manifest),
             )
         except (InvalidSourceError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1174,6 +1241,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {
                     "run_mode": "automated",
                     "runtime_settings": settings_snapshot,
+                    **(
+                        {
+                            "translator_api_key_ref": (
+                                request.translator_api_key_ref
+                            )
+                        }
+                        if request.translator_api_key_ref
+                        else {}
+                    ),
                 }
             )
             manager.store.save(manifest)
@@ -1442,11 +1518,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         detail=f"执行 {step.value} 前必须先完成 {previous}。",
                     )
             apply_option_updates(manifest, request)
+            remember_runtime_settings(manifest, request.settings)
             manager.submit_step(
                 job_id,
                 step,
                 force=request.force,
-                settings=settings_for(request.settings),
+                settings=settings_for(request.settings, manifest),
             )
             audit_log.record(
                 actor=actor_from(http_request),
@@ -1523,11 +1600,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     settings=request.settings,
                 ),
             )
+            remember_runtime_settings(manifest, request.settings)
             manager.submit_segments(
                 job_id,
                 segment_ids=request.segment_ids,
                 mode=request.mode,
-                settings=settings_for(request.settings),
+                settings=settings_for(request.settings, manifest),
             )
             audit_log.record(
                 actor=actor_from(http_request),

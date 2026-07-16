@@ -61,7 +61,7 @@ class PaperPodcastManager:
             active = self._futures.get(manifest.id)
             if active is not None and not active.done():
                 raise RuntimeError("论文播客任务正在执行。")
-            clear_cancel_request(manifest)
+            clear_cancel_request(manifest, self.store)
             self.store.save(manifest)
             task_id = self.queue.enqueue(
                 resource_type="paper_podcast",

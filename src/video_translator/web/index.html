@@ -1825,6 +1825,9 @@
 
     function statusLabel(job) {
       const executionState = taskExecutionState(job);
+      if (job.cancel_requested) {
+        return executionState === "queued" ? "正在取消（排队）" : "正在取消";
+      }
       if (executionState === "queued") return "排队等待";
       if (executionState === "running") return "执行中";
       if (job.error || job.status === "failed") return "失败，可继续";
@@ -2597,6 +2600,9 @@
 
     function bookStatus(book) {
       const executionState = taskExecutionState(book);
+      if (book.cancel_requested) {
+        return executionState === "queued" ? "正在取消（排队）" : "正在取消";
+      }
       if (executionState === "queued") return "排队等待";
       if (executionState === "running") return "执行中";
       if (book.error) return "失败，可继续";
@@ -2615,6 +2621,9 @@
 
     function paperPodcastStatus(podcast) {
       const executionState = taskExecutionState(podcast);
+      if (podcast.cancel_requested) {
+        return executionState === "queued" ? "正在取消（排队）" : "正在取消";
+      }
       if (executionState === "queued") return "排队等待";
       if (executionState === "running") return "执行中";
       if (podcast.error) return "失败，可继续";

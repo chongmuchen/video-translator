@@ -273,6 +273,7 @@ def create_facing_pdf(
     output: Path,
     *,
     gutter: float = 18.0,
+    expected_pairs: int | None = None,
 ) -> Path:
     """Combine alternating original/translation pages into wide spreads."""
     source = pymupdf.open(alternating_pdf)
@@ -282,6 +283,15 @@ def create_facing_pdf(
         if source.page_count == 0 or source.page_count % 2:
             raise PipelineError(
                 "左右分页需要偶数页的分页双语 PDF（原文页、译文页成对）。"
+            )
+        if (
+            expected_pairs is not None
+            and source.page_count != expected_pairs * 2
+        ):
+            raise PipelineError(
+                "分页双语 PDF 页数与原书不匹配："
+                f"原书 {expected_pairs} 页，双语结果 {source.page_count} 页；"
+                "为避免左右页面配错，已停止合并。"
             )
         output.parent.mkdir(parents=True, exist_ok=True)
         temporary.unlink(missing_ok=True)
@@ -376,6 +386,53 @@ def render_professional_pdf(
         raise PipelineError(f"未知专业 PDF 排版模式：{mode}")
     if source.suffix.lower() != ".pdf":
         raise PipelineError("专业 PDF 引擎仅支持 PDF。")
+
+    facing_expected_pairs: int | None = None
+    if spec.variant == "facing":
+        try:
+            with pymupdf.open(source) as original_document:
+                facing_expected_pairs = original_document.page_count
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise PipelineError(f"无法读取原 PDF 页数：{exc}") from exc
+        existing_dual = outputs_dir / (
+            f"{title}-zh-pdf2zh_{spec.service}_dual-{book_id[:8]}.pdf"
+        )
+        if existing_dual.is_file():
+            create_facing_pdf(
+                existing_dual,
+                selected_output,
+                expected_pairs=facing_expected_pairs,
+            )
+            generated = {
+                mode: str(selected_output),
+                spec.with_variant("dual"): str(existing_dual),
+            }
+            existing_mono = outputs_dir / (
+                f"{title}-zh-pdf2zh_{spec.service}_mono-{book_id[:8]}.pdf"
+            )
+            if existing_mono.is_file():
+                generated[spec.with_variant("mono")] = str(existing_mono)
+            log_path = job_dir / f"professional-pdf-{mode}.log"
+            log_path.write_text(
+                "Reused existing alternating bilingual PDF:\n"
+                f"{existing_dual}\n\n"
+                "Created facing-page PDF:\n"
+                f"{selected_output}\n",
+                encoding="utf-8",
+            )
+            warnings = [
+                "已复用现有 PDFMathTranslate 分页双语结果，未重新翻译。",
+                (
+                    "已把原文页/译文页成对合并：每张宽页左侧为原文，"
+                    "右侧为中文，并保留矢量文字与公式。"
+                ),
+            ]
+            return (
+                selected_output,
+                warnings,
+                generated,
+                str(log_path),
+            )
 
     uv = _uv_binary(settings)
     run_dir = job_dir / "professional-pdf" / mode
@@ -472,7 +529,11 @@ def render_professional_pdf(
     selected_mode = spec.with_variant(spec.variant)
     selected_path = selected_output
     if spec.variant == "facing":
-        create_facing_pdf(outputs["dual"], selected_path)
+        create_facing_pdf(
+            outputs["dual"],
+            selected_path,
+            expected_pairs=facing_expected_pairs,
+        )
         generated[selected_mode] = str(selected_path)
         for raw_variant in ("mono", "dual"):
             if raw_variant not in outputs:
