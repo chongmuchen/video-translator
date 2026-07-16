@@ -352,6 +352,57 @@ def test_professional_pdf_timeout_decodes_bytes_output(
     assert "partial stderr" in log_text
 
 
+def test_professional_pdf_pins_compatible_tencent_tmt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.4")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        translator_provider="passthrough",
+    )
+    job_dir = tmp_path / "job"
+    outputs_dir = tmp_path / "outputs"
+    job_dir.mkdir()
+    outputs_dir.mkdir()
+    monkeypatch.setattr(
+        professional_pdf,
+        "_uv_binary",
+        lambda settings: "/usr/bin/uv",
+    )
+    captured: list[str] = []
+
+    def fake_run(command, **kwargs):
+        captured.extend(command)
+        run_dir = Path(command[command.index("-o") + 1])
+        (run_dir / "paper-dual.pdf").write_bytes(b"%PDF-1.4 dual")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(professional_pdf.subprocess, "run", fake_run)
+
+    render_professional_pdf(
+        source,
+        outputs_dir / "translated.pdf",
+        mode="pdf2zh_bing_dual",
+        settings=settings,
+        job_dir=job_dir,
+        outputs_dir=outputs_dir,
+        title="Paper",
+        book_id="1234567890abcdef",
+        target_language="简体中文",
+    )
+
+    with_index = captured.index("--with")
+    assert captured[with_index + 1] == (
+        "tencentcloud-sdk-python-tmt==3.1.121"
+    )
+    assert captured[with_index + 2] == "pdf2zh"
+    thread_index = captured.index("-t")
+    assert captured[thread_index + 1] == "4"
+
+
 def test_book_extract_auto_ocr_when_pdf_has_no_text(
     tmp_path: Path,
     monkeypatch,

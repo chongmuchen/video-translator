@@ -1034,11 +1034,12 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 
 - 输出模式：
   - `pdf2zh_bing_mono` / `pdf2zh_bing_dual`：PDFMathTranslate 高保真，
-    Bing 免 Key，输出纯译文或双语 PDF。严肃论文首选先试这个；
+    Bing 免 Key，输出纯译文或分页双语 PDF。分页双语通常是原文页和译文页分开，
+    不等同于同页左右对照；
   - `pdf2zh_google_mono` / `pdf2zh_google_dual`：PDFMathTranslate 高保真，
     Google 免 Key，适合和 Bing 输出对比；
   - `babeldoc_bing_mono` / `babeldoc_bing_dual`：BabelDOC 后端，高保真
-    论文引擎，适合和 PDFMathTranslate fast 后端对比；
+    论文引擎；`dual` 是同页左右对照，是当前原文+译文并排阅读的推荐模式；
   - `pdf2zh_openailiked_*` / `babeldoc_openailiked_*`：使用网页上方配置的
     OpenAI-compatible 接口，可接 Kimi 等兼容服务；
   - `pdf2zh_ollama_*` / `babeldoc_ollama_*`：使用本机 Ollama；
@@ -1058,8 +1059,9 @@ curl http://127.0.0.1:8000/api/jobs/staged \
 - 术语表：继续使用 JSON 对象，保证人名、书名、技术词汇前后一致。
 
 论文建议使用 PDF；EPUB 只支持 `translated_only` 和 `bilingual`。对
-`Attention Is All You Need` 这类公式、图表、双栏论文，优先试
-`pdf2zh_bing_mono`，再试 `pdf2zh_bing_dual` 和 `babeldoc_bing_mono`。
+`Attention Is All You Need` 这类公式、图表、双栏论文，如果只要译文优先试
+`pdf2zh_bing_mono`；如果要原文和译文同页左右对照，优先试
+`babeldoc_bing_dual`。
 专业 PDF 模式会绕过项目内置 `blocks.json` 翻译缓存，由 PDFMathTranslate /
 BabelDOC 自行解析、翻译和重排，这样才能尽量保留公式、图、表和原 PDF 版式。
 内置 `paper_*` 模式只是草稿/纯文字兜底，不适合作为严肃论文最终输出。
@@ -1113,9 +1115,9 @@ PDFMathTranslate/BabelDOC + Bing 免 Key 时，默认 180 秒配置对应的约 
 首次建议在网页测试一篇 5～12 页论文：
 
 1. 选择 PDF；
-2. 输出模式先选 `PDFMathTranslate · Bing免Key · 纯译文`；
-3. 跑完后在任务详情里切换为 `PDFMathTranslate · Bing免Key · 双语`；
-4. 再切换为 `BabelDOC · Bing免Key · 纯译文`；
+2. 输出模式先选 `BabelDOC · Bing免Key · 左右对照`；
+3. 如果只要译文，再切换为 `PDFMathTranslate · Bing免Key · 纯译文`；
+4. 如需对比分页双语，再切换为 `PDFMathTranslate · Bing免Key · 分页双语`；
 5. 下载各版本，用预览并排比较公式、图、表、脚注和双栏区域。
 
 命令行分步测试普通书籍：
@@ -1392,8 +1394,9 @@ PDF / 论文翻译开源引擎调研：
 2. 抽取后打开 `blocks.json`，抽查章节顺序、页码和原文；
 3. 翻译中途停止一次，再继续，确认已完成块没有重新翻译；
 4. 普通书籍用 `translated_only` / `bilingual` 各排一次；
-5. 论文先用 `pdf2zh_bing_mono`，再用 `pdf2zh_bing_dual`、
-   `babeldoc_bing_mono` 各排一次，比较公式、图表、双栏和输出文字；
+5. 论文需要原文+译文并排时先用 `babeldoc_bing_dual`；只看译文时再用
+   `pdf2zh_bing_mono`；确实想要原文页/译文页分开的分页双语时再试
+   `pdf2zh_bing_dual`；
 6. EPUB 用 Apple Books/Calibre 检查目录跳转、图片和段落；PDF 用预览检查目录、
    页数、图片、中文字体、溢出警告和至少每章一页的译文准确度。
 

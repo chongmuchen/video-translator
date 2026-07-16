@@ -935,32 +935,32 @@
                 <select id="book-mode">
                   <optgroup label="专业论文 PDF 高保真（无本页OCR · 需文字层PDF）">
                     <option value="pdf2zh_bing_mono">PDFMathTranslate · Bing免Key · 纯译文 · 无OCR</option>
-                    <option value="pdf2zh_bing_dual">PDFMathTranslate · Bing免Key · 双语 · 无OCR</option>
+                    <option value="pdf2zh_bing_dual">PDFMathTranslate · Bing免Key · 分页双语 · 无OCR</option>
                     <option value="pdf2zh_google_mono">PDFMathTranslate · Google免Key · 纯译文 · 无OCR</option>
-                    <option value="pdf2zh_google_dual">PDFMathTranslate · Google免Key · 双语 · 无OCR</option>
+                    <option value="pdf2zh_google_dual">PDFMathTranslate · Google免Key · 分页双语 · 无OCR</option>
                     <option value="babeldoc_bing_mono">BabelDOC · Bing免Key · 纯译文 · 无OCR</option>
-                    <option value="babeldoc_bing_dual">BabelDOC · Bing免Key · 双语 · 无OCR</option>
+                    <option value="babeldoc_bing_dual" selected>BabelDOC · Bing免Key · 左右对照 · 无OCR（推荐）</option>
                   </optgroup>
                   <optgroup label="专业论文 PDF 高保真（无本页OCR · 使用上面的 API/本地模型）">
                     <option value="pdf2zh_openailiked_mono">PDFMathTranslate · OpenAI-compatible/Kimi等 · 纯译文 · 无OCR</option>
-                    <option value="pdf2zh_openailiked_dual">PDFMathTranslate · OpenAI-compatible/Kimi等 · 双语 · 无OCR</option>
+                    <option value="pdf2zh_openailiked_dual">PDFMathTranslate · OpenAI-compatible/Kimi等 · 分页双语 · 无OCR</option>
                     <option value="pdf2zh_ollama_mono">PDFMathTranslate · Ollama · 纯译文 · 无OCR</option>
-                    <option value="pdf2zh_ollama_dual">PDFMathTranslate · Ollama · 双语 · 无OCR</option>
+                    <option value="pdf2zh_ollama_dual">PDFMathTranslate · Ollama · 分页双语 · 无OCR</option>
                     <option value="pdf2zh_deepseek_mono">PDFMathTranslate · DeepSeek · 纯译文 · 无OCR</option>
-                    <option value="pdf2zh_deepseek_dual">PDFMathTranslate · DeepSeek · 双语 · 无OCR</option>
+                    <option value="pdf2zh_deepseek_dual">PDFMathTranslate · DeepSeek · 分页双语 · 无OCR</option>
                     <option value="pdf2zh_minimax_mono">PDFMathTranslate · MiniMax · 纯译文 · 无OCR</option>
-                    <option value="pdf2zh_minimax_dual">PDFMathTranslate · MiniMax · 双语 · 无OCR</option>
+                    <option value="pdf2zh_minimax_dual">PDFMathTranslate · MiniMax · 分页双语 · 无OCR</option>
                     <option value="babeldoc_openailiked_mono">BabelDOC · OpenAI-compatible/Kimi等 · 纯译文 · 无OCR</option>
-                    <option value="babeldoc_openailiked_dual">BabelDOC · OpenAI-compatible/Kimi等 · 双语 · 无OCR</option>
+                    <option value="babeldoc_openailiked_dual">BabelDOC · OpenAI-compatible/Kimi等 · 左右对照 · 无OCR</option>
                     <option value="babeldoc_ollama_mono">BabelDOC · Ollama · 纯译文 · 无OCR</option>
-                    <option value="babeldoc_ollama_dual">BabelDOC · Ollama · 双语 · 无OCR</option>
+                    <option value="babeldoc_ollama_dual">BabelDOC · Ollama · 左右对照 · 无OCR</option>
                     <option value="babeldoc_deepseek_mono">BabelDOC · DeepSeek · 纯译文 · 无OCR</option>
-                    <option value="babeldoc_deepseek_dual">BabelDOC · DeepSeek · 双语 · 无OCR</option>
+                    <option value="babeldoc_deepseek_dual">BabelDOC · DeepSeek · 左右对照 · 无OCR</option>
                     <option value="babeldoc_minimax_mono">BabelDOC · MiniMax · 纯译文 · 无OCR</option>
-                    <option value="babeldoc_minimax_dual">BabelDOC · MiniMax · 双语 · 无OCR</option>
+                    <option value="babeldoc_minimax_dual">BabelDOC · MiniMax · 左右对照 · 无OCR</option>
                   </optgroup>
                   <optgroup label="内置书籍 / 草稿阅读版（支持本页OCR配置）">
-                    <option value="translated_only" selected>普通书籍：只保留译文 · 支持OCR</option>
+                    <option value="translated_only">普通书籍：只保留译文 · 支持OCR</option>
                     <option value="bilingual">普通书籍：原文 + 译文对照 · 支持OCR</option>
                     <option value="paper_translated_reflow">内置草稿：纯译文重排 · 支持OCR</option>
                     <option value="paper_translated_reference">内置草稿：按原页序纯译文 · 支持OCR</option>
@@ -969,7 +969,7 @@
                     <option value="paper_reflow">内置草稿：新文章式重排左右对照 · 支持OCR</option>
                   </optgroup>
                 </select>
-                <p class="help">OCR 配置只作用于“支持OCR”的内置模式。PDFMathTranslate/BabelDOC 当前不走本页 OCR，适合能复制文字的 PDF；扫描版先用内置 OCR 模式。</p>
+                <p class="help">想要原文和译文同页左右排版，选 BabelDOC · 左右对照。PDFMathTranslate 的“分页双语”通常会把原文页和译文页拆成多页。OCR 配置只作用于“支持OCR”的内置模式。</p>
               </div>
               <div class="field">
                 <label for="book-target">目标语言</label>
@@ -2444,6 +2444,10 @@
       $("#empty-panel").hidden = true;
       $("#book-panel").hidden = false;
       $("#book-detail").hidden = true;
+      if (!$("#book-file").files?.length) {
+        delete $("#book-mode").dataset.userChanged;
+        $("#book-mode").value = "babeldoc_bing_dual";
+      }
       renderJobs();
       refreshBooks();
     }
@@ -2849,33 +2853,46 @@
       paper_reference: "论文排版·参考原文·OCR",
       paper_reflow: "论文排版·新文章式重排·OCR",
       pdf2zh_bing_mono: "PDFMathTranslate·Bing·纯译文·无OCR",
-      pdf2zh_bing_dual: "PDFMathTranslate·Bing·双语·无OCR",
+      pdf2zh_bing_dual: "PDFMathTranslate·Bing·分页双语·无OCR",
       pdf2zh_google_mono: "PDFMathTranslate·Google·纯译文·无OCR",
-      pdf2zh_google_dual: "PDFMathTranslate·Google·双语·无OCR",
+      pdf2zh_google_dual: "PDFMathTranslate·Google·分页双语·无OCR",
       pdf2zh_openailiked_mono: "PDFMathTranslate·OpenAI-compatible/Kimi等·纯译文·无OCR",
-      pdf2zh_openailiked_dual: "PDFMathTranslate·OpenAI-compatible/Kimi等·双语·无OCR",
+      pdf2zh_openailiked_dual: "PDFMathTranslate·OpenAI-compatible/Kimi等·分页双语·无OCR",
       pdf2zh_ollama_mono: "PDFMathTranslate·Ollama·纯译文·无OCR",
-      pdf2zh_ollama_dual: "PDFMathTranslate·Ollama·双语·无OCR",
+      pdf2zh_ollama_dual: "PDFMathTranslate·Ollama·分页双语·无OCR",
       pdf2zh_deepseek_mono: "PDFMathTranslate·DeepSeek·纯译文·无OCR",
-      pdf2zh_deepseek_dual: "PDFMathTranslate·DeepSeek·双语·无OCR",
+      pdf2zh_deepseek_dual: "PDFMathTranslate·DeepSeek·分页双语·无OCR",
       pdf2zh_minimax_mono: "PDFMathTranslate·MiniMax·纯译文·无OCR",
-      pdf2zh_minimax_dual: "PDFMathTranslate·MiniMax·双语·无OCR",
+      pdf2zh_minimax_dual: "PDFMathTranslate·MiniMax·分页双语·无OCR",
       babeldoc_bing_mono: "BabelDOC·Bing·纯译文·无OCR",
-      babeldoc_bing_dual: "BabelDOC·Bing·双语·无OCR",
+      babeldoc_bing_dual: "BabelDOC·Bing·左右对照·无OCR",
       babeldoc_google_mono: "BabelDOC·Google·纯译文·无OCR",
-      babeldoc_google_dual: "BabelDOC·Google·双语·无OCR",
+      babeldoc_google_dual: "BabelDOC·Google·左右对照·无OCR",
       babeldoc_openailiked_mono: "BabelDOC·OpenAI-compatible/Kimi等·纯译文·无OCR",
-      babeldoc_openailiked_dual: "BabelDOC·OpenAI-compatible/Kimi等·双语·无OCR",
+      babeldoc_openailiked_dual: "BabelDOC·OpenAI-compatible/Kimi等·左右对照·无OCR",
       babeldoc_ollama_mono: "BabelDOC·Ollama·纯译文·无OCR",
-      babeldoc_ollama_dual: "BabelDOC·Ollama·双语·无OCR",
+      babeldoc_ollama_dual: "BabelDOC·Ollama·左右对照·无OCR",
       babeldoc_deepseek_mono: "BabelDOC·DeepSeek·纯译文·无OCR",
-      babeldoc_deepseek_dual: "BabelDOC·DeepSeek·双语·无OCR",
+      babeldoc_deepseek_dual: "BabelDOC·DeepSeek·左右对照·无OCR",
       babeldoc_minimax_mono: "BabelDOC·MiniMax·纯译文·无OCR",
-      babeldoc_minimax_dual: "BabelDOC·MiniMax·双语·无OCR",
+      babeldoc_minimax_dual: "BabelDOC·MiniMax·左右对照·无OCR",
     };
 
     function bookModeLabel(mode) {
       return bookModeLabels[mode] || mode || "未设置";
+    }
+
+    function syncBookModeForSelectedFile() {
+      const file = $("#book-file").files?.[0];
+      if (!file) return;
+      const mode = $("#book-mode");
+      const name = file.name.toLowerCase();
+      if (name.endsWith(".pdf") && !mode.dataset.userChanged) {
+        mode.value = "babeldoc_bing_dual";
+      }
+      if (name.endsWith(".epub") && isProfessionalBookMode(mode.value)) {
+        mode.value = "translated_only";
+      }
     }
 
     function bookModeOptionsFor(format) {
@@ -3607,6 +3624,10 @@
     $("#new-job-button").addEventListener("click", showNewJob);
     $("#book-button").addEventListener("click", showBooks);
     $("#paper-podcast-button").addEventListener("click", showPaperPodcasts);
+    $("#book-file").addEventListener("change", syncBookModeForSelectedFile);
+    $("#book-mode").addEventListener("change", event => {
+      event.target.dataset.userChanged = "true";
+    });
     $("#completion-sound").addEventListener("change", event => {
       localStorage.setItem(
         completionSoundStorageKey,

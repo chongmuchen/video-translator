@@ -45,6 +45,14 @@ PROFESSIONAL_PDF_MODES: dict[str, ProfessionalPdfMode] = {
 
 PROFESSIONAL_PDF_OUTPUT_MODES = set(PROFESSIONAL_PDF_MODES)
 
+# pdf2zh 1.9.11 imports TextTranslateRequest at module import time even when
+# another translation service (for example Bing) is selected. Tencent's
+# 3.1.129 TMT wheel no longer exposes that class, so an unconstrained
+# `uv tool run pdf2zh` fails before it can process any PDF. Keep the last
+# compatible TMT wheel explicit until pdf2zh removes or updates that import.
+_PDF2ZH_TENCENT_TMT_VERSION = "3.1.121"
+_FREE_TRANSLATION_THREADS = 4
+
 _NUMPY_SITE_CUSTOMIZE = '''\
 """Runtime compatibility shim for BabelDOC with NumPy 2.x."""
 try:
@@ -300,6 +308,11 @@ def render_professional_pdf(
         "run",
         "--python",
         "3.12",
+        "--with",
+        (
+            "tencentcloud-sdk-python-tmt=="
+            f"{_PDF2ZH_TENCENT_TMT_VERSION}"
+        ),
         "pdf2zh",
     ]
     if spec.babeldoc:
@@ -314,7 +327,11 @@ def render_professional_pdf(
             "-s",
             spec.service,
             "-t",
-            "1",
+            str(
+                _FREE_TRANSLATION_THREADS
+                if spec.service in {"bing", "google"}
+                else 1
+            ),
             "-o",
             str(run_dir),
         ]

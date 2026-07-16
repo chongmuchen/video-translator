@@ -349,6 +349,15 @@ class BookTranslationPipeline:
             f"{manifest.title}-zh-{mode}-{manifest.id[:8]}{suffix}"
         )
         if mode in PROFESSIONAL_PDF_OUTPUT_MODES:
+            # Professional engines perform translation and layout in one long
+            # subprocess. Persist a fresh in-progress state before launching
+            # it so retries do not keep displaying an earlier failure while
+            # the replacement run is active.
+            manifest.status = BookStatus.translating
+            manifest.target_language = selected_target_language
+            manifest.output_mode = mode
+            manifest.error = None
+            self.store.save(manifest)
             try:
                 path, warnings, generated, log_path = render_professional_pdf(
                     Path(manifest.source_path),
