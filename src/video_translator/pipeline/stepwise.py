@@ -21,7 +21,7 @@ from ..models import JobManifest, JobStatus, Segment
 from ..runtime import MediaBinaries, resolve_media_binaries
 from ..settings import Settings
 from ..store import JobStore
-from .downloader import acquire_source
+from .downloader import DownloadResult, acquire_source
 from .diarization import diarize_segments
 from .lip_sync import apply_lip_sync
 from .media import (
@@ -463,21 +463,21 @@ class StepwiseVideoTranslationPipeline:
             self.run_step(manifest, step)
         return manifest
 
-    def _step_download(
+    def _record_acquired_source(
         self,
         manifest: JobManifest,
-        logger: logging.Logger,
+        acquired: DownloadResult,
+        media: MediaBinaries,
+        *,
+        require_video: bool = False,
     ) -> None:
-        media = resolve_media_binaries(self.settings)
-        acquired = acquire_source(
-            manifest.source,
-            self.store.job_dir(manifest.id),
-            self.settings,
-            media,
-            logger,
-        )
+        if not acquired.path.is_file():
+            raise InvalidSourceError(f"本地媒体不存在：{acquired.path}")
         if not has_audio_stream(acquired.path, media):
             raise InvalidSourceError("视频中没有可识别的音轨。")
+        is_video = has_video_stream(acquired.path, media)
+        if require_video and not is_video:
+            raise InvalidSourceError("所选文件没有视频画面，请选择视频文件。")
         duration = probe_duration(acquired.path, media)
         if duration > self.settings.max_video_seconds:
             raise InvalidSourceError(
@@ -485,13 +485,82 @@ class StepwiseVideoTranslationPipeline:
                 f"{self.settings.max_video_seconds} 秒。"
             )
         manifest.title = acquired.title
-        manifest.source_path = str(acquired.path)
+        manifest.source_path = str(acquired.path.resolve())
         manifest.metadata.update(acquired.metadata)
         manifest.metadata["media_duration"] = duration
-        manifest.metadata["media_kind"] = (
-            "video" if has_video_stream(acquired.path, media) else "audio"
-        )
+        manifest.metadata["media_kind"] = "video" if is_video else "audio"
         self.store.add_title_to_job_dir(manifest, acquired.title)
+
+    def register_local_source(
+        self,
+        manifest: JobManifest,
+        source_path: Path,
+        *,
+        title: str,
+        original_filename: str,
+    ) -> JobManifest:
+        """Validate an uploaded video and mark acquisition as completed."""
+
+        media = resolve_media_binaries(self.settings)
+        acquired = DownloadResult(
+            path=source_path.resolve(),
+            title=title,
+            metadata={
+                "source_type": "local_upload",
+                "original_filename": original_filename,
+                "original_title": title,
+            },
+        )
+        self._record_acquired_source(
+            manifest,
+            acquired,
+            media,
+            require_video=True,
+        )
+        # Recording the title may rename the job directory. Keep a durable
+        # source reference so a forced acquisition can revalidate this file.
+        manifest.source = str(Path(manifest.source_path).resolve())
+        self._mark_completed(manifest, PipelineStep.download)
+        return manifest
+
+    def _step_download(
+        self,
+        manifest: JobManifest,
+        logger: logging.Logger,
+    ) -> None:
+        media = resolve_media_binaries(self.settings)
+        if manifest.metadata.get("source_type") == "local_upload":
+            local_path = Path(manifest.source).expanduser().resolve()
+            acquired = DownloadResult(
+                path=local_path,
+                title=(
+                    str(manifest.metadata.get("original_title") or "").strip()
+                    or local_path.stem
+                ),
+                metadata={
+                    "source_type": "local_upload",
+                    "original_filename": manifest.metadata.get(
+                        "original_filename",
+                        local_path.name,
+                    ),
+                    "original_title": manifest.metadata.get(
+                        "original_title",
+                        local_path.stem,
+                    ),
+                },
+            )
+        else:
+            acquired = acquire_source(
+                manifest.source,
+                self.store.job_dir(manifest.id),
+                self.settings,
+                media,
+                logger,
+            )
+        self._record_acquired_source(manifest, acquired, media)
+        if manifest.metadata.get("source_type") == "local_upload":
+            manifest.source = str(Path(manifest.source_path).resolve())
+            self.store.save(manifest)
 
     def _step_extract(
         self,

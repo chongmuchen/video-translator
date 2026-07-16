@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     data_dir: Path = PROJECT_ROOT / "data"
     max_video_seconds: int = 7200
     max_download_height: int = 1080
+    max_local_upload_bytes: int = 20 * 1024 * 1024 * 1024
+    max_local_batch_files: int = 20
     allowed_hosts: str = (
         "youtube.com,www.youtube.com,m.youtube.com,youtu.be,"
         "bilibili.com,www.bilibili.com,b23.tv,podcasts.apple.com"

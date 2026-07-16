@@ -22,6 +22,13 @@ class DownloadResult:
     metadata: dict
 
 
+LOCAL_VIDEO_SUFFIXES = frozenset({".mp4", ".mkv", ".mov", ".webm", ".m4v"})
+LOCAL_AUDIO_SUFFIXES = frozenset(
+    {".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus"}
+)
+LOCAL_MEDIA_SUFFIXES = LOCAL_VIDEO_SUFFIXES | LOCAL_AUDIO_SUFFIXES
+
+
 def explain_download_error(
     error: Exception,
     *,
@@ -115,26 +122,14 @@ def _copy_local_file(source: Path, job_dir: Path) -> DownloadResult:
     source = source.expanduser().resolve()
     if not source.is_file():
         raise InvalidSourceError(f"本地视频不存在：{source}")
-    if source.suffix.lower() not in {
-        ".mp4",
-        ".mkv",
-        ".mov",
-        ".webm",
-        ".m4v",
-        ".mp3",
-        ".m4a",
-        ".aac",
-        ".wav",
-        ".flac",
-        ".ogg",
-        ".opus",
-    }:
+    if source.suffix.lower() not in LOCAL_MEDIA_SUFFIXES:
         raise InvalidSourceError(
             "本地媒体仅支持 mp4、mkv、mov、webm、m4v、"
             "mp3、m4a、aac、wav、flac、ogg、opus。"
         )
     target = job_dir / f"source{source.suffix.lower()}"
-    shutil.copy2(source, target)
+    if source != target.resolve():
+        shutil.copy2(source, target)
     return DownloadResult(
         path=target,
         title=source.stem,

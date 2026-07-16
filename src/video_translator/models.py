@@ -208,6 +208,18 @@ class AutomatedJobCreateRequest(StagedJobCreateRequest):
     translator_api_key_ref: str | None = None
 
 
+class LocalJobImportRequest(BaseModel):
+    """Shared configuration for one batch of uploaded local videos."""
+
+    run_mode: Literal["staged", "automated"] = "automated"
+    options: PipelineOptions = Field(default_factory=PipelineOptions)
+    settings: RuntimeSettingsUpdate = Field(
+        default_factory=RuntimeSettingsUpdate
+    )
+    translator_api_key_ref: str | None = None
+    authorization: ContentAuthorization | None = None
+
+
 class SecretSaveRequest(BaseModel):
     value: str = Field(min_length=1)
     reference: str | None = None

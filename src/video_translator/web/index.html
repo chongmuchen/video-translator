@@ -707,14 +707,29 @@
       <div class="workspace">
         <section class="panel new-job" id="new-job-panel">
           <h3>第一步：先创建任务</h3>
-          <p>支持 YouTube、B站单集和 Apple Podcasts 单集。任务清单和媒体保存在项目的 <code>data/</code>；使用云翻译或在线 TTS 时，文本会发送到你配置的服务。</p>
+          <p>支持本地视频批量导入，以及 YouTube、B站和 Apple Podcasts。每个本地视频会建立独立任务并并发推进；任务清单和媒体保存在项目的 <code>data/</code>。</p>
           <form id="new-job-form">
             <div class="grid">
-              <div class="field wide">
+              <div class="field">
+                <label for="create-source-type">媒体来源</label>
+                <select id="create-source-type">
+                  <option value="local" selected>本地视频（可多选）</option>
+                  <option value="remote">YouTube / B站 / Apple Podcasts URL</option>
+                </select>
+                <p class="help">本地视频上传后直接进入音频提取，不经过网络下载。</p>
+              </div>
+              <div class="field wide" id="remote-source-field" hidden>
                 <label for="source-url">视频或播客 URL <span class="recommended">必填</span></label>
                 <input id="source-url" name="url" type="url" required
                   placeholder="https://www.youtube.com/watch?v=...">
                 <p class="help">B站分 P 请保留 <code>?p=数字</code>；Apple Podcasts 必须是包含 <code>?i=</code> 的单集链接。</p>
+              </div>
+              <div class="field wide" id="local-source-field">
+                <label for="source-files">本地视频 <span class="recommended">可多选</span></label>
+                <input id="source-files" type="file" multiple
+                  accept=".mp4,.mkv,.mov,.webm,.m4v,video/mp4,video/quicktime,video/webm">
+                <p class="help" id="local-file-summary">支持 MP4、MKV、MOV、WebM、M4V，一次最多 20 个。整批共用下面的识别、翻译、配音与对齐模板。</p>
+                <p class="help">默认总任务并发 3；Mac GPU 识别并发 1、翻译并发 2、FFmpeg 媒体阶段并发 2，其余任务会显示“排队等待”。</p>
               </div>
               <div class="field">
                 <label for="create-mode">运行方式</label>
@@ -1683,11 +1698,45 @@
 
     function syncCreateMode() {
       const automated = $("#create-mode").value === "automated";
+      const local = $("#create-source-type").value === "local";
+      const count = $("#source-files").files?.length || 0;
       $("#automation-settings").hidden = !automated;
       $("#template-picker-field").hidden = !automated;
-      $("#create-submit").textContent = automated
-        ? "新建任务，然后自动跑完 7 步"
-        : "新建任务，然后只执行下载";
+      $("#create-submit").textContent = local
+        ? automated
+          ? `导入${count ? ` ${count} 个` : ""}本地视频并自动配音翻译`
+          : `导入${count ? ` ${count} 个` : ""}本地视频，稍后分步处理`
+        : automated
+          ? "新建任务，然后自动跑完 7 步"
+          : "新建任务，然后只执行下载";
+    }
+
+    function syncCreateSourceType() {
+      const local = $("#create-source-type").value === "local";
+      $("#local-source-field").hidden = !local;
+      $("#remote-source-field").hidden = local;
+      $("#source-url").required = !local;
+      $("#source-files").required = local;
+      syncCreateMode();
+    }
+
+    function syncLocalFileSummary() {
+      const files = [...($("#source-files").files || [])];
+      const summary = $("#local-file-summary");
+      if (!files.length) {
+        summary.textContent =
+          "支持 MP4、MKV、MOV、WebM、M4V，一次最多 20 个。整批共用下面的识别、翻译、配音与对齐模板。";
+      } else {
+        const bytes = files.reduce((total, file) => total + file.size, 0);
+        const size = bytes >= 1024 ** 3
+          ? `${(bytes / 1024 ** 3).toFixed(2)} GB`
+          : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+        summary.textContent =
+          `已选择 ${files.length} 个视频，共 ${size}：` +
+          files.slice(0, 5).map(file => file.name).join("、") +
+          (files.length > 5 ? `，另有 ${files.length - 5} 个` : "");
+      }
+      syncCreateMode();
     }
 
     function parseTemplateGlossary() {
@@ -3597,6 +3646,18 @@
       event.preventDefault();
       const submit = $("#create-submit");
       submit.disabled = true;
+      const localSource = $("#create-source-type").value === "local";
+      const localFiles = [...($("#source-files").files || [])];
+      if (localSource && !localFiles.length) {
+        notify("请至少选择一个本地视频。", true);
+        submit.disabled = false;
+        return;
+      }
+      if (!localSource && !$("#source-url").value.trim()) {
+        notify("请输入视频或播客 URL。", true);
+        submit.disabled = false;
+        return;
+      }
       const sourceLanguage = $("#create-language").value.trim();
       const cookies = $("#create-cookies").value;
       const automated = $("#create-mode").value === "automated";
@@ -3692,19 +3753,50 @@
         }
       }
       try {
-        const endpoint = automated
-          ? "/api/jobs/automated"
-          : "/api/jobs/staged";
-        const job = await api(endpoint, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(payload)
-        });
+        let jobs;
+        let failedCount = 0;
+        if (localSource) {
+          const form = new FormData();
+          localFiles.forEach(file => form.append("files", file));
+          const localConfig = {
+            run_mode: automated ? "automated" : "staged",
+            options: payload.options,
+            settings: payload.settings,
+          };
+          if (payload.translator_api_key_ref) {
+            localConfig.translator_api_key_ref =
+              payload.translator_api_key_ref;
+          }
+          form.append("config", JSON.stringify(localConfig));
+          const result = await api("/api/jobs/local", {
+            method: "POST",
+            body: form,
+          });
+          jobs = result.jobs || [];
+          failedCount = result.failed_count || 0;
+        } else {
+          const endpoint = automated
+            ? "/api/jobs/automated"
+            : "/api/jobs/staged";
+          jobs = [await api(endpoint, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+          })];
+        }
         await refreshJobs();
-        updateJob(job);
-        localStorage.setItem("video-translator-job", job.id);
-        notify(
-          automated
+        const firstJob = jobs[0];
+        if (firstJob) {
+          updateJob(firstJob);
+          localStorage.setItem("video-translator-job", firstJob.id);
+          localStorage.setItem(
+            "video-translator-history-kind",
+            classifyJob(firstJob)
+          );
+        }
+        notify(localSource
+          ? `已创建 ${jobs.length} 个本地视频任务${failedCount ? `，其中 ${failedCount} 个文件校验失败` : ""}。后台会按并发上限自动推进。`
+          : automated
             ? "任务已创建。目录和日志已显示，后台会按模板自动跑完 7 步。"
             : "任务已创建。目录和日志已显示，后台正在下载。"
         );
@@ -3719,6 +3811,11 @@
     $("#new-job-button").addEventListener("click", showNewJob);
     $("#book-button").addEventListener("click", showBooks);
     $("#paper-podcast-button").addEventListener("click", showPaperPodcasts);
+    $("#create-source-type").addEventListener(
+      "change",
+      syncCreateSourceType
+    );
+    $("#source-files").addEventListener("change", syncLocalFileSummary);
     $("#book-file").addEventListener("change", syncBookModeForSelectedFile);
     $("#book-mode").addEventListener("change", event => {
       event.target.dataset.userChanged = "true";
@@ -3908,6 +4005,10 @@
           api("/api/paper-podcasts"),
         ]);
         $("#local-chip").title = health.data_directory;
+        if (health.workers?.jobs) {
+          $("#local-chip").textContent =
+            `● 仅写入本机 · 最多 ${health.workers.jobs} 个任务并发`;
+        }
         state.jobs = jobs;
         state.books = books;
         state.paperPodcasts = paperPodcasts;
@@ -3947,7 +4048,7 @@
       !savedTemplate;
     applyAutomationTemplate(savedTemplate || automationTemplates.mac_codex);
     $("#create-template").value = savedTemplate ? "last" : "mac_codex";
-    syncCreateMode();
+    syncCreateSourceType();
     $("#paper-podcast-provider").dispatchEvent(new Event("change"));
     setInterval(() => {
       if (!$("#book-panel").hidden) refreshBooks();

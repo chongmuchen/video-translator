@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -5,6 +6,7 @@ from fastapi.testclient import TestClient
 from video_translator.api import create_app
 from video_translator.models import JobStatus, PipelineOptions
 from video_translator.pipeline.stepwise import PipelineStep
+from video_translator.pipeline.stepwise import StepwiseVideoTranslationPipeline
 from video_translator.settings import Settings
 
 
@@ -278,6 +280,181 @@ def test_automated_endpoint_runs_all_steps_with_one_settings_snapshot(
     assert restored.metadata["runtime_settings"]["asr_model"] == "small.en"
     assert "tts_http_api_key" not in restored.metadata["runtime_settings"]
     assert restored.metadata["translator_api_key_ref"] == "c" * 32
+
+
+def _fake_register_local_source(
+    self,
+    manifest,
+    source_path,
+    *,
+    title,
+    original_filename,
+):
+    manifest.title = title
+    manifest.source_path = str(source_path.resolve())
+    manifest.source = manifest.source_path
+    manifest.metadata.update(
+        {
+            "source_type": "local_upload",
+            "original_filename": original_filename,
+            "original_title": title,
+            "media_duration": 12.0,
+            "media_kind": "video",
+        }
+    )
+    self.store.add_title_to_job_dir(manifest, title)
+    manifest.source = manifest.source_path
+    manifest.completed_steps = ["download"]
+    manifest.status = JobStatus.downloaded
+    manifest.progress = 10
+    manifest.stage_message = "视频已导入，等待提取音频"
+    self.store.save(manifest)
+    return manifest
+
+
+def test_local_video_batch_import_creates_independent_staged_jobs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    monkeypatch.setattr(
+        StepwiseVideoTranslationPipeline,
+        "register_local_source",
+        _fake_register_local_source,
+    )
+    config = {
+        "run_mode": "staged",
+        "options": {
+            "target_language": "简体中文",
+            "source_language": "en",
+        },
+        "settings": {"asr_backend": "mlx_whisper"},
+    }
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs/local",
+            files=[
+                (
+                    "files",
+                    ("../../Lecture One.mp4", b"video-one", "video/mp4"),
+                ),
+                (
+                    "files",
+                    ("Lecture Two.mkv", b"video-two", "video/x-matroska"),
+                ),
+            ],
+            data={"config": json.dumps(config, ensure_ascii=False)},
+        )
+
+    assert response.status_code == 202
+    result = response.json()
+    assert result["count"] == 2
+    assert result["failed_count"] == 0
+    assert result["concurrency"] == {
+        "jobs": 3,
+        "asr": 1,
+        "translation": 2,
+        "media": 2,
+    }
+    ids = [item["id"] for item in result["jobs"]]
+    assert len(set(ids)) == 2
+    assert [item["status"] for item in result["jobs"]] == [
+        "downloaded",
+        "downloaded",
+    ]
+    assert [item["next_step"] for item in result["jobs"]] == [
+        "extract",
+        "extract",
+    ]
+    restored = [manager.store.get(job_id) for job_id in ids]
+    assert [Path(item.source_path).read_bytes() for item in restored] == [
+        b"video-one",
+        b"video-two",
+    ]
+    for item in restored:
+        source = Path(item.source_path).resolve()
+        assert manager.store.settings.jobs_dir.resolve() in source.parents
+        assert source.name in {"source.mp4", "source.mkv"}
+        assert item.source == item.source_path
+        assert item.metadata["source_type"] == "local_upload"
+
+
+def test_local_video_batch_automated_submits_every_job_with_saved_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    submitted = []
+    monkeypatch.setattr(
+        StepwiseVideoTranslationPipeline,
+        "register_local_source",
+        _fake_register_local_source,
+    )
+    monkeypatch.setattr(
+        app.state.secret_store,
+        "read",
+        lambda reference: (
+            "resolved-secret" if reference == "d" * 32 else ""
+        ),
+    )
+
+    def fake_submit_existing(manifest, *, settings=None, metadata=None):
+        submitted.append((manifest.id, settings))
+        return manifest
+
+    monkeypatch.setattr(manager, "submit_existing", fake_submit_existing)
+    config = {
+        "run_mode": "automated",
+        "settings": {
+            "translator_provider": "codex_cli",
+            "translator_api_key": "must-not-be-saved",
+            "tts_provider": "edge",
+        },
+        "translator_api_key_ref": "d" * 32,
+    }
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs/local",
+            files=[
+                ("files", ("one.mp4", b"one", "video/mp4")),
+                ("files", ("two.mp4", b"two", "video/mp4")),
+            ],
+            data={"config": json.dumps(config)},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["count"] == 2
+    assert len(submitted) == 2
+    assert all(item[1].translator_provider == "codex_cli" for item in submitted)
+    assert all(item[1].translator_api_key == "resolved-secret" for item in submitted)
+    for job_id, _ in submitted:
+        manifest = manager.store.get(job_id)
+        assert "translator_api_key" not in manifest.metadata["runtime_settings"]
+        assert manifest.metadata["translator_api_key_ref"] == "d" * 32
+
+
+def test_local_video_batch_rejects_invalid_extension_before_creating_jobs(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(data_dir=tmp_path / "data"))
+    manager = app.state.manager
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs/local",
+            files=[
+                ("files", ("valid.mp4", b"video", "video/mp4")),
+                ("files", ("notes.txt", b"text", "text/plain")),
+            ],
+            data={"config": json.dumps({"run_mode": "staged"})},
+        )
+
+    assert response.status_code == 400
+    assert "notes.txt 格式不支持" in response.json()["detail"]
+    assert manager.store.list() == []
 
 
 def test_api_key_template_uses_keychain_reference(

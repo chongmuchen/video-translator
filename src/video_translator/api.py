@@ -18,6 +18,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from pydantic import ValidationError
 
 from .cleanup import cleanup_intermediates
 from .control import cancellation_requested
@@ -45,6 +46,7 @@ from .models import (
     JobCreateRequest,
     JobManifest,
     JobStatus,
+    LocalJobImportRequest,
     SecretSaveRequest,
     SegmentRerunRequest,
     StagedJobCreateRequest,
@@ -56,8 +58,12 @@ from .paper_podcast.models import (
     PaperPodcastStep,
 )
 from .paper_podcast.pipeline import PaperPodcastPipeline
-from .pipeline.downloader import validate_remote_url
-from .pipeline.stepwise import PipelineStep, STEP_ORDER
+from .pipeline.downloader import LOCAL_VIDEO_SUFFIXES, validate_remote_url
+from .pipeline.stepwise import (
+    PipelineStep,
+    STEP_ORDER,
+    StepwiseVideoTranslationPipeline,
+)
 from .settings import Settings, get_settings
 from .secrets import KeychainSecretStore
 
@@ -96,16 +102,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             or "local-user"
         )
 
-    def check_quota(actor: str) -> None:
+    def check_quota(actor: str, requested: int = 1) -> None:
         if runtime_settings.max_jobs_per_day <= 0:
             return
         used = audit_log.count_today(actor=actor, action="create")
-        if used >= runtime_settings.max_jobs_per_day:
+        if used + max(1, requested) > runtime_settings.max_jobs_per_day:
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    f"今日任务配额已用完：{used}/"
-                    f"{runtime_settings.max_jobs_per_day}"
+                    f"今日任务配额不足：已用 {used}/"
+                    f"{runtime_settings.max_jobs_per_day}，"
+                    f"本次需要 {max(1, requested)} 个。"
                 ),
             )
 
@@ -390,6 +397,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "status": "ok",
             "storage": "local",
             "data_directory": str(runtime_settings.data_dir),
+            "workers": {
+                "jobs": runtime_settings.worker_count,
+                "asr": runtime_settings.asr_worker_count,
+                "translation": runtime_settings.translation_worker_count,
+                "media": runtime_settings.media_worker_count,
+            },
             "ocr": {
                 "available": ocr.available,
                 "ocrmypdf": ocr.ocrmypdf,
@@ -1267,6 +1280,170 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             details={"source": validated, "mode": "automated"},
         )
         return job_payload(manifest)
+
+    @app.post(
+        "/api/jobs/local",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def import_local_jobs(
+        http_request: Request,
+        files: list[UploadFile] = File(...),
+        config: str = Form(...),
+    ) -> dict:
+        try:
+            request = LocalJobImportRequest.model_validate_json(config)
+        except ValidationError as exc:
+            reasons = "; ".join(
+                (
+                    ".".join(str(item) for item in error["loc"])
+                    + ": "
+                    + error["msg"]
+                )
+                for error in exc.errors(include_url=False)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"本地视频任务配置无效：{reasons}",
+            ) from exc
+        if not files:
+            raise HTTPException(status_code=400, detail="请至少选择一个本地视频。")
+        if len(files) > runtime_settings.max_local_batch_files:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"一次最多导入 {runtime_settings.max_local_batch_files} "
+                    "个本地视频。"
+                ),
+            )
+        descriptors: list[tuple[UploadFile, str, str, str]] = []
+        for upload in files:
+            raw_name = (upload.filename or "").replace("\\", "/")
+            filename = Path(raw_name).name.strip() or "local-video.mp4"
+            suffix = Path(filename).suffix.lower()
+            if suffix not in LOCAL_VIDEO_SUFFIXES:
+                allowed = "、".join(
+                    sorted(item.removeprefix(".") for item in LOCAL_VIDEO_SUFFIXES)
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{filename} 格式不支持；本地视频支持 {allowed}。",
+                )
+            if (
+                upload.size is not None
+                and upload.size > runtime_settings.max_local_upload_bytes
+            ):
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"{filename} 超过单文件上传限制 "
+                        f"{runtime_settings.max_local_upload_bytes // (1024 ** 3)} GB。"
+                    ),
+                )
+            title = Path(filename).stem.strip() or "local-video"
+            descriptors.append((upload, filename, suffix, title))
+
+        actor = actor_from(http_request)
+        assert_authorized(
+            request.authorization,
+            required=runtime_settings.require_content_authorization,
+        )
+        check_quota(actor, len(descriptors))
+        selected_settings = settings_for(request.settings)
+        if request.translator_api_key_ref:
+            selected_settings = selected_settings.model_copy(
+                update={
+                    "translator_api_key": secret_store.read(
+                        request.translator_api_key_ref
+                    )
+                }
+            )
+        settings_snapshot = safe_runtime_settings_snapshot(
+            request.settings.model_dump(exclude_none=True)
+        )
+        pipeline = StepwiseVideoTranslationPipeline(
+            selected_settings,
+            manager.store,
+        )
+        imported: list[dict] = []
+        failed_count = 0
+        for upload, filename, suffix, title in descriptors:
+            manifest = manager.create(filename, request.options)
+            apply_authorization(manifest, request.authorization)
+            manifest.metadata.update(
+                {
+                    "run_mode": request.run_mode,
+                    "runtime_settings": settings_snapshot,
+                    "source_type": "local_upload",
+                    "original_filename": filename,
+                    "original_title": title,
+                    **(
+                        {
+                            "translator_api_key_ref": (
+                                request.translator_api_key_ref
+                            )
+                        }
+                        if request.translator_api_key_ref
+                        else {}
+                    ),
+                }
+            )
+            manager.store.save(manifest)
+            target = manager.store.job_dir(manifest.id) / f"source{suffix}"
+            registered = False
+            try:
+                total = 0
+                with target.open("wb") as output:
+                    while chunk := upload.file.read(8 * 1024 * 1024):
+                        total += len(chunk)
+                        if total > runtime_settings.max_local_upload_bytes:
+                            raise InvalidSourceError(
+                                f"{filename} 超过单文件上传限制 "
+                                f"{runtime_settings.max_local_upload_bytes // (1024 ** 3)} GB。"
+                            )
+                        output.write(chunk)
+                if total <= 0:
+                    raise InvalidSourceError(f"{filename} 是空文件。")
+                pipeline.register_local_source(
+                    manifest,
+                    target,
+                    title=title,
+                    original_filename=filename,
+                )
+                registered = True
+                if request.run_mode == "automated":
+                    manager.submit_existing(
+                        manifest,
+                        settings=selected_settings,
+                    )
+            except (OSError, RuntimeError, VideoTranslatorError) as exc:
+                failed_count += 1
+                if not registered:
+                    target.unlink(missing_ok=True)
+                manager.store.fail(manifest, str(exc))
+            audit_log.record(
+                actor=actor,
+                action="create",
+                resource_type="job",
+                resource_id=manifest.id,
+                details={
+                    "source": "local_upload",
+                    "filename": filename,
+                    "mode": request.run_mode,
+                    "status": manifest.status.value,
+                },
+            )
+            imported.append(job_payload(manifest))
+        return {
+            "count": len(imported),
+            "failed_count": failed_count,
+            "jobs": imported,
+            "concurrency": {
+                "jobs": runtime_settings.worker_count,
+                "asr": runtime_settings.asr_worker_count,
+                "translation": runtime_settings.translation_worker_count,
+                "media": runtime_settings.media_worker_count,
+            },
+        }
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
