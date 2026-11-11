@@ -10,6 +10,8 @@ data/jobs/*
 !data/jobs/.gitkeep
 data/outputs/*
 !data/outputs/.gitkeep
+data/projects/*
+!data/projects/README.md
 .runtime/
 separated/
 work/

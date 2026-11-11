@@ -78,10 +78,6 @@ class Settings(BaseSettings):
     dub_sample_rate: int = 24000
     max_tempo_factor: float = 1.8
 
-    api_host: str = "127.0.0.1"
-    api_port: int = 8000
-    worker_count: int = 1
-
     @model_validator(mode="after")
     def resolve_paths(self) -> "Settings":
         if not self.data_dir.is_absolute():

@@ -2,7 +2,7 @@
 
 
 class VideoTranslatorError(RuntimeError):
-    """Base error shown to CLI and API users."""
+    """Base error shown to CLI users."""
 
 
 class ConfigurationError(VideoTranslatorError):

@@ -1,14 +1,18 @@
 import logging
 from pathlib import Path
 
+import pytest
+
 from video_translator.commands import run_command
 from video_translator.pipeline.media import mux_video, probe_media
 from video_translator.runtime import resolve_media_binaries
 from video_translator.settings import Settings
 
 
-def test_mux_produces_dub_original_and_subtitle_tracks(
+@pytest.mark.parametrize("embed_subtitles", [True, False])
+def test_mux_produces_dub_original_and_optional_subtitle_tracks(
     tmp_path: Path,
+    embed_subtitles: bool,
 ) -> None:
     settings = Settings(data_dir=tmp_path)
     media = resolve_media_binaries(settings)
@@ -62,7 +66,7 @@ def test_mux_produces_dub_original_and_subtitle_tracks(
     mux_video(
         source,
         dub,
-        subtitles,
+        subtitles if embed_subtitles else None,
         output,
         settings=settings,
         media=media,
@@ -74,6 +78,10 @@ def test_mux_produces_dub_original_and_subtitle_tracks(
     )
     streams = probe_media(output, media)["streams"]
     assert sum(item["codec_type"] == "video" for item in streams) == 1
-    assert sum(item["codec_type"] == "audio" for item in streams) == 2
-    assert sum(item["codec_type"] == "subtitle" for item in streams) == 1
+    audio = [item for item in streams if item["codec_type"] == "audio"]
+    assert len(audio) == 2
+    assert audio[0]["disposition"]["default"] == 1
+    assert audio[0]["tags"]["language"] == "chi"
+    assert audio[1]["disposition"]["default"] == 0
+    assert sum(item["codec_type"] == "subtitle" for item in streams) == int(embed_subtitles)
 

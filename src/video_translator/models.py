@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -19,6 +18,7 @@ class JobStatus(str, Enum):
     downloading = "downloading"
     extracting = "extracting"
     transcribing = "transcribing"
+    prepared = "prepared"
     translating = "translating"
     synthesizing = "synthesizing"
     aligning = "aligning"
@@ -55,11 +55,6 @@ class PipelineOptions(BaseModel):
     glossary: dict[str, str] = Field(default_factory=dict)
 
 
-class JobCreateRequest(BaseModel):
-    url: str
-    options: PipelineOptions = Field(default_factory=PipelineOptions)
-
-
 class JobManifest(BaseModel):
     id: str
     source: str
@@ -73,26 +68,13 @@ class JobManifest(BaseModel):
     source_path: str | None = None
     audio_path: str | None = None
     subtitle_path: str | None = None
+    english_subtitle_path: str | None = None
     dub_audio_path: str | None = None
     output_path: str | None = None
     segments_path: str | None = None
+    translations_path: str | None = None
     error: str | None = None
+    failed_stage: JobStatus | None = None
+    overflow_segments: list[dict[str, int | float | list[int]]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-    def public_dict(self) -> dict[str, Any]:
-        data = self.model_dump(mode="json")
-        for key in (
-            "source_path",
-            "audio_path",
-            "subtitle_path",
-            "dub_audio_path",
-            "segments_path",
-        ):
-            data.pop(key, None)
-        data["download_ready"] = bool(
-            self.status == JobStatus.completed
-            and self.output_path
-            and Path(self.output_path).is_file()
-        )
-        return data
 

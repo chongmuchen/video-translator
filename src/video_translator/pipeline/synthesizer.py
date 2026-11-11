@@ -3,15 +3,65 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import math
+import tempfile
 import wave
 from pathlib import Path
+from typing import TypedDict
 
 import httpx
 
 from ..errors import ConfigurationError, PipelineError
 from ..models import Segment
+from ..runtime import resolve_media_binaries
 from ..settings import Settings
+from .media import probe_audio_duration
+
+
+class WordTiming(TypedDict):
+    start: float
+    end: float
+    text: str
+
+
+def _word_timing(start: object, end: object, text: object) -> WordTiming | None:
+    if type(start) not in (float, int) or type(end) not in (float, int):
+        return None
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        start_seconds = float(start)
+        end_seconds = float(end)
+    except OverflowError:
+        return None
+    if not 0 <= start_seconds < end_seconds < math.inf:
+        return None
+    return {"start": start_seconds, "end": end_seconds, "text": text}
+
+
+def read_word_timings(audio_path: str | Path | None) -> list[WordTiming]:
+    """Read optional word timings relative to the original synthesized audio."""
+    if audio_path is None:
+        return []
+    sidecar = Path(audio_path).with_suffix(".words.json")
+    try:
+        rows = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    timings = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return []
+        word = _word_timing(row.get("start"), row.get("end"), row.get("text"))
+        if word is None or (timings and word["start"] < timings[-1]["start"]):
+            return []
+        timings.append(word)
+    return timings
 
 
 class SpeechSynthesizer:
@@ -26,13 +76,37 @@ class SpeechSynthesizer:
             raise ConfigurationError(
                 "缺少 edge-tts，请重新运行 bootstrap。"
             ) from exc
-        communicate = edge_tts.Communicate(
-            text=text,
-            voice=self.settings.tts_voice,
-            rate=self.settings.tts_rate,
-            volume=self.settings.tts_volume,
-        )
-        await communicate.save(str(output))
+        kwargs = {
+            "text": text,
+            "voice": self.settings.tts_voice,
+            "rate": self.settings.tts_rate,
+            "volume": self.settings.tts_volume,
+        }
+        try:
+            communicate = edge_tts.Communicate(**kwargs, boundary="WordBoundary")
+        except TypeError as exc:
+            if "unexpected keyword argument 'boundary'" not in str(exc):
+                raise
+            communicate = edge_tts.Communicate(**kwargs)
+
+        ticks_per_second = 10_000_000
+        timings: list[WordTiming] = []
+        sidecar = output.with_suffix(".words.json")
+        sidecar.unlink(missing_ok=True)
+        with output.open("wb") as audio:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    offset, duration = chunk.get("offset"), chunk.get("duration")
+                    if isinstance(offset, (int, float)) and isinstance(duration, (int, float)):
+                        word = _word_timing(offset, offset + duration, chunk.get("text"))
+                        if word:
+                            word["start"] /= ticks_per_second
+                            word["end"] /= ticks_per_second
+                            timings.append(word)
+        if timings:
+            sidecar.write_text(json.dumps(timings, ensure_ascii=False), encoding="utf-8")
 
     def _http_save(self, text: str, output: Path) -> None:
         if not self.settings.tts_http_url:
@@ -126,28 +200,79 @@ class SpeechSynthesizer:
         if not output.is_file() or output.stat().st_size == 0:
             raise PipelineError("TTS 没有生成有效音频。")
 
+    def _voice_fingerprint(self) -> bytes:
+        settings = self.settings
+        options: list[str | int | None] = [
+            settings.tts_provider, settings.tts_voice, settings.tts_rate
+        ]
+        if settings.tts_provider == "edge":
+            options.append(settings.tts_volume)
+        elif settings.tts_provider == "http":
+            options.extend([settings.tts_http_url, settings.tts_http_api_key])
+        else:
+            options.extend(
+                [
+                    settings.cosyvoice_base_url,
+                    settings.cosyvoice_mode,
+                    settings.cosyvoice_prompt_text,
+                    settings.cosyvoice_instruct_text,
+                    settings.cosyvoice_sample_rate,
+                ]
+            )
+            if settings.cosyvoice_mode in {"zero_shot", "cross_lingual", "instruct2"}:
+                prompt = settings.cosyvoice_prompt_wav
+                if prompt and prompt.expanduser().is_file():
+                    contents = prompt.expanduser().read_bytes()
+                    options.append(hashlib.sha256(contents).hexdigest())
+        return hashlib.sha256(json.dumps(options).encode("utf-8")).digest()
+
     def synthesize_segments(
         self,
         segments: list[Segment],
         output_dir: Path,
     ) -> list[Segment]:
         output_dir.mkdir(parents=True, exist_ok=True)
+        voice_fingerprint = self._voice_fingerprint()
+        extension = ".wav" if self.settings.tts_provider == "cosyvoice" else ".mp3"
+        media = None
         for position, segment in enumerate(segments, start=1):
             text = (segment.translated_text or "").strip()
             if not text:
                 raise PipelineError(f"片段 {segment.index} 没有可朗读的译文。")
-            extension = (
-                ".wav"
-                if self.settings.tts_provider == "cosyvoice"
-                else ".mp3"
-            )
-            output = output_dir / f"{segment.index:05d}{extension}"
+            key = hashlib.sha256(voice_fingerprint + text.encode("utf-8")).hexdigest()
+            output = output_dir / f"{segment.index:05d}-{key}{extension}"
+            if output.is_file():
+                try:
+                    if media is None:
+                        media = resolve_media_binaries(self.settings)
+                    probe_audio_duration(output, media)
+                except PipelineError:
+                    self.logger.warning(
+                        "片段 %s 的缓存音频无效，重新生成。", segment.index
+                    )
+                else:
+                    segment.tts_file = str(output)
+                    continue
             self.logger.info(
                 "生成配音 %s/%s: %s",
                 position,
                 len(segments),
                 text[:60],
             )
-            self.synthesize(text, output)
+            with tempfile.NamedTemporaryFile(
+                prefix=".tts-", suffix=extension, dir=output_dir, delete=False
+            ) as file:
+                temporary = Path(file.name)
+            temporary_words = temporary.with_suffix(".words.json")
+            output_words = output.with_suffix(".words.json")
+            try:
+                self.synthesize(text, temporary)
+                output_words.unlink(missing_ok=True)
+                temporary.replace(output)
+                if temporary_words.is_file():
+                    temporary_words.replace(output_words)
+            finally:
+                temporary.unlink(missing_ok=True)
+                temporary_words.unlink(missing_ok=True)
             segment.tts_file = str(output)
         return segments

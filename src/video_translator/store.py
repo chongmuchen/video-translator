@@ -1,11 +1,12 @@
-"""Small atomic JSON job store suitable for a single-process MVP."""
+"""Persist local job state and serialize writes to the same job."""
 
 from __future__ import annotations
 
 import json
 import re
-import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from .errors import PipelineError
@@ -19,7 +20,6 @@ JOB_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 class JobStore:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._lock = threading.RLock()
         settings.ensure_directories()
 
     def job_dir(self, job_id: str) -> Path:
@@ -30,43 +30,37 @@ class JobStore:
     def manifest_path(self, job_id: str) -> Path:
         return self.job_dir(job_id) / "manifest.json"
 
+    @contextmanager
+    def lock_job(self, job_id: str) -> Iterator[None]:
+        import fcntl
+
+        with (self.job_dir(job_id) / ".lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise PipelineError(f"任务 {job_id} 正在另一个进程中运行。") from exc
+            yield
+
     def create(
         self,
         source: str,
         options: PipelineOptions,
     ) -> JobManifest:
-        with self._lock:
-            job_id = uuid.uuid4().hex
-            self.job_dir(job_id).mkdir(parents=True)
-            manifest = JobManifest(
-                id=job_id,
-                source=source,
-                options=options,
-            )
-            self.save(manifest)
-            return manifest
+        job_id = uuid.uuid4().hex
+        self.job_dir(job_id).mkdir(parents=True)
+        manifest = JobManifest(id=job_id, source=source, options=options)
+        return self.save(manifest)
 
     def save(self, manifest: JobManifest) -> JobManifest:
-        with self._lock:
-            manifest.updated_at = utc_now()
-            path = self.manifest_path(manifest.id)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(".json.tmp")
-            temporary.write_text(
-                manifest.model_dump_json(indent=2),
-                encoding="utf-8",
-            )
-            temporary.replace(path)
-            return manifest
+        manifest.updated_at = utc_now()
+        self._write_text(self.manifest_path(manifest.id), manifest.model_dump_json(indent=2))
+        return manifest
 
     def get(self, job_id: str) -> JobManifest:
         path = self.manifest_path(job_id)
         if not path.is_file():
             raise FileNotFoundError(job_id)
-        with self._lock:
-            return JobManifest.model_validate_json(
-                path.read_text(encoding="utf-8")
-            )
+        return JobManifest.model_validate_json(path.read_text(encoding="utf-8"))
 
     def set_stage(
         self,
@@ -79,9 +73,11 @@ class JobStore:
         manifest.progress = progress
         manifest.stage_message = message
         manifest.error = None
+        manifest.failed_stage = None
         self.save(manifest)
 
     def fail(self, manifest: JobManifest, error: str) -> None:
+        manifest.failed_stage = manifest.status
         manifest.status = JobStatus.failed
         manifest.stage_message = "处理失败"
         manifest.error = error
@@ -93,13 +89,20 @@ class JobStore:
         payload: list[dict],
     ) -> Path:
         path = self.job_dir(manifest.id) / "segments.json"
-        temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(path)
+        self._write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
         manifest.segments_path = str(path)
         self.save(manifest)
         return path
+
+    def write_translations(self, manifest: JobManifest, payload: list[dict]) -> None:
+        path = self.job_dir(manifest.id) / "translations.json"
+        self._write_text(path, json.dumps({"segments": payload}, ensure_ascii=False, indent=2))
+        manifest.translations_path = str(path)
+        self.save(manifest)
+
+    @staticmethod
+    def _write_text(path: Path, content: str) -> None:
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
 

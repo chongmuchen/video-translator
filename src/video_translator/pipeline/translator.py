@@ -31,30 +31,40 @@ def _extract_json_object(content: str) -> dict:
     return value
 
 
-def apply_translation_response(
+def translation_map(
     segments: Sequence[Segment],
     content: str,
-) -> None:
+    *,
+    field: str = "text",
+) -> dict[int, str]:
     value = _extract_json_object(content)
     translated = value.get("segments")
     if not isinstance(translated, list):
         raise PipelineError("翻译结果缺少 segments 数组。")
 
+    expected = {segment.index for segment in segments}
     by_id: dict[int, str] = {}
     for item in translated:
-        if not isinstance(item, dict):
-            continue
-        try:
-            index = int(item["id"])
-            text = str(item["text"]).strip()
-        except (KeyError, TypeError, ValueError):
-            continue
-        if text:
-            by_id[index] = text
+        if not isinstance(item, dict) or type(item.get("id")) is not int:
+            raise PipelineError("译稿中的每个片段都必须有整数 id。")
+        index = item["id"]
+        if index not in expected:
+            raise PipelineError(f"译稿包含未知片段 ID：{index}")
+        if index in by_id:
+            raise PipelineError(f"译稿包含重复片段 ID：{index}")
+        text = item.get(field)
+        if not isinstance(text, str) or not text.strip():
+            raise PipelineError(f"译稿片段 {index} 的 {field} 必须是非空文本。")
+        by_id[index] = text.strip()
 
     missing = [segment.index for segment in segments if segment.index not in by_id]
     if missing:
         raise PipelineError(f"翻译结果缺少片段 ID：{missing}")
+    return by_id
+
+
+def apply_translation_response(segments: Sequence[Segment], content: str) -> None:
+    by_id = translation_map(segments, content)
     for segment in segments:
         segment.translated_text = by_id[segment.index]
 
@@ -99,10 +109,17 @@ class SegmentTranslator:
             "你是专业影视字幕译者和中文配音改写编辑。"
             "忠实翻译，不补充原文没有的信息；结合整个批次理解上下文；"
             "人名、术语、数字和单位必须一致；中文要自然、适合朗读。"
+            "同一句话跨片段时保持连贯，只在句子真正结束时写句末标点。"
             "在不损失关键信息的情况下，尽量不超过 max_zh_chars。"
             "只返回 JSON，格式严格为 "
             '{"segments":[{"id":0,"text":"译文"}]}，不得返回解释。'
         )
+        if target_language.casefold() == "english":
+            system_prompt = (
+                "你是影视字幕译者。将每个片段翻译为自然简洁的英文字幕，"
+                "结合上下文，保留人名、术语、数字和单位。"
+                '只返回 JSON，格式为 {"segments":[{"id":0,"text":"English subtitle"}]}。'
+            )
         user_prompt = (
             f"目标语言：{target_language}\n"
             f"术语表：{glossary_text}\n"

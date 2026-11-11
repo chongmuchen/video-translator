@@ -7,6 +7,8 @@ import logging
 import math
 import sys
 import wave
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..commands import run_command
@@ -35,8 +37,7 @@ def probe_media(path: Path, media: MediaBinaries) -> dict:
         raise PipelineError(f"ffprobe 返回了无效 JSON：{exc}") from exc
 
 
-def probe_duration(path: Path, media: MediaBinaries) -> float:
-    data = probe_media(path, media)
+def _media_duration(data: dict, path: Path) -> float:
     duration = data.get("format", {}).get("duration")
     if duration is None:
         for stream in data.get("streams", []):
@@ -47,9 +48,22 @@ def probe_duration(path: Path, media: MediaBinaries) -> float:
         value = float(duration)
     except (TypeError, ValueError) as exc:
         raise PipelineError(f"无法读取媒体时长：{path}") from exc
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise PipelineError(f"媒体时长无效：{path}")
     return value
+
+
+def probe_duration(path: Path, media: MediaBinaries) -> float:
+    return _media_duration(probe_media(path, media), path)
+
+
+def probe_audio_duration(path: Path, media: MediaBinaries) -> float:
+    data = probe_media(path, media)
+    if not any(
+        stream.get("codec_type") == "audio" for stream in data.get("streams", [])
+    ):
+        raise PipelineError(f"文件没有音轨：{path}")
+    return _media_duration(data, path)
 
 
 def has_audio_stream(path: Path, media: MediaBinaries) -> bool:
@@ -135,26 +149,69 @@ def atempo_chain(factor: float) -> str:
     return ",".join(f"atempo={part:.6f}" for part in parts)
 
 
+class DubbingOverflowError(PipelineError):
+    """One or more synthesized lines cannot fit the original timeline."""
+
+    def __init__(self, segments: list[dict], max_tempo: float):
+        self.segments = segments
+        super().__init__(
+            f"{len(segments)} 个片段在最大 {max_tempo:g} 倍语速下仍然超时，请缩短译文。"
+        )
+
+
+@dataclass(frozen=True)
+class SpeechAlignment:
+    tempo: float
+    duration: float  # Aligned audio duration before padding.
+
+
 def normalize_tts_segments(
     segments: list[Segment],
     output_dir: Path,
     settings: Settings,
     media: MediaBinaries,
     logger: logging.Logger,
+    *,
+    reject_overflow: bool = False,
+    speech_ends: Mapping[int, float] | None = None,
+    alignments: dict[int, SpeechAlignment] | None = None,
 ) -> list[Path]:
-    """Resample every generated line and fit it to its subtitle slot."""
+    """Resample every utterance and fit it to its allotted time."""
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    aligned: list[Path] = []
+    measured: list[tuple[Segment, Path, float, bool]] = []
+    overflows: list[dict] = []
     for segment in segments:
         if not segment.tts_file:
             raise PipelineError(f"片段 {segment.index} 缺少 TTS 文件。")
         input_path = Path(segment.tts_file)
         source_duration = probe_duration(input_path, media)
+        word_end = speech_ends.get(segment.index) if speech_ends else None
+        trim_tail = word_end is not None and 0 < word_end < source_duration - 0.18
+        if trim_tail:
+            # Some providers append silence to short phrases. Keep room for the
+            # last sound to decay, but do not speed up speech to fit that silence.
+            source_duration = word_end + 0.18
+        measured.append((segment, input_path, source_duration, trim_tail))
+        required_tempo = source_duration / segment.duration
+        if reject_overflow and required_tempo > settings.max_tempo_factor:
+            overflows.append(
+                {
+                    "id": segment.index,
+                    "audio_seconds": round(source_duration, 3),
+                    "slot_seconds": round(segment.duration, 3),
+                    "required_tempo": round(required_tempo, 3),
+                }
+            )
+    if overflows:
+        raise DubbingOverflowError(overflows, settings.max_tempo_factor)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    aligned: list[Path] = []
+    for segment, input_path, source_duration, trim_tail in measured:
         target_duration = segment.duration
         required_tempo = source_duration / target_duration
         tempo = 1.0
-        if required_tempo > 1.02:
+        if required_tempo > (1.0 if reject_overflow else 1.02):
             tempo = min(required_tempo, settings.max_tempo_factor)
         if required_tempo > settings.max_tempo_factor:
             logger.warning(
@@ -165,13 +222,17 @@ def normalize_tts_segments(
                 target_duration,
             )
 
-        filters = [
-            f"aresample={settings.dub_sample_rate}",
-            atempo_chain(tempo),
-            f"apad=pad_dur={target_duration:.6f}",
-            f"atrim=duration={target_duration:.6f}",
-            "asetpts=PTS-STARTPTS",
-        ]
+        filters = [f"aresample={settings.dub_sample_rate}"]
+        if trim_tail:
+            filters.append(f"atrim=duration={source_duration:.6f}")
+        filters.extend(
+            [
+                atempo_chain(tempo),
+                f"apad=pad_dur={target_duration:.6f}",
+                f"atrim=duration={target_duration:.6f}",
+                "asetpts=PTS-STARTPTS",
+            ]
+        )
         target = output_dir / f"{segment.index:05d}.wav"
         run_command(
             [
@@ -193,6 +254,10 @@ def normalize_tts_segments(
             logger=logger,
         )
         aligned.append(target)
+        if alignments is not None:
+            alignments[segment.index] = SpeechAlignment(
+                tempo=tempo, duration=min(target_duration, source_duration / tempo)
+            )
     return aligned
 
 
@@ -288,10 +353,15 @@ def _format_srt_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def write_srt(segments: list[Segment], output: Path) -> Path:
+def write_srt(
+    segments: list[Segment], output: Path, *, source_text: bool = False
+) -> Path:
     lines: list[str] = []
     for position, segment in enumerate(segments, start=1):
-        text = (segment.translated_text or segment.source_text).strip()
+        text = segment.source_text
+        if not source_text and segment.translated_text:
+            text = segment.translated_text
+        text = text.strip()
         text = " ".join(text.splitlines())
         lines.extend(
             [
@@ -340,7 +410,7 @@ def separate_background(
 def mux_video(
     source: Path,
     dub_audio: Path,
-    subtitles: Path,
+    subtitles: Path | None,
     output: Path,
     *,
     settings: Settings,
@@ -352,6 +422,9 @@ def mux_video(
     logger: logging.Logger,
 ) -> Path:
     """Create Chinese dubbed audio, optional original track, and subtitles."""
+
+    if burn_subtitles and subtitles is None:
+        raise PipelineError("烧录字幕时必须提供字幕文件。")
 
     source_has_audio = has_audio_stream(source, media)
     args: list[str | Path] = [
@@ -366,8 +439,9 @@ def mux_video(
     if background_audio:
         background_index = 2
         args.extend(["-i", background_audio])
-    subtitle_index = 3 if background_audio else 2
-    args.extend(["-i", subtitles])
+    if subtitles is not None:
+        subtitle_index = 3 if background_audio else 2
+        args.extend(["-i", subtitles])
 
     mix_source = (
         f"{background_index}:a:0"
@@ -399,9 +473,10 @@ def mux_video(
     args.extend(["-map", "[dubbed]" if can_mix else "1:a:0"])
     if keep_original_audio and source_has_audio:
         args.extend(["-map", "0:a:0"])
-    args.extend(["-map", f"{subtitle_index}:0"])
+    if subtitles is not None:
+        args.extend(["-map", f"{subtitle_index}:0"])
 
-    if burn_subtitles:
+    if burn_subtitles and subtitles is not None:
         escaped = str(subtitles).replace("\\", "\\\\").replace(":", "\\:")
         args.extend(["-vf", f"subtitles=filename='{escaped}'", "-c:v", "libx264"])
     else:
@@ -413,8 +488,6 @@ def mux_video(
             "aac",
             "-b:a",
             "192k",
-            "-c:s",
-            "mov_text",
             "-metadata:s:a:0",
             "language=chi",
             "-metadata:s:a:0",
@@ -434,17 +507,18 @@ def mux_video(
                 "0",
             ]
         )
-    args.extend(
-        [
-            "-metadata:s:s:0",
-            "language=chi",
-            "-metadata:s:s:0",
-            "title=简体中文字幕",
-            "-movflags",
-            "+faststart",
-            output,
-        ]
-    )
+    if subtitles is not None:
+        args.extend(
+            [
+                "-c:s",
+                "mov_text",
+                "-metadata:s:s:0",
+                "language=chi",
+                "-metadata:s:s:0",
+                "title=简体中文字幕",
+            ]
+        )
+    args.extend(["-movflags", "+faststart", output])
     output.parent.mkdir(parents=True, exist_ok=True)
     run_command(args, logger=logger)
     return output

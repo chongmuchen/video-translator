@@ -50,7 +50,6 @@ fi
 
 echo
 echo "Bootstrap complete."
-echo "1. cp .env.example .env"
-echo "2. Configure the translation endpoint in .env"
-echo "3. .venv/bin/video-translator doctor"
-echo "4. .venv/bin/video-translator serve"
+echo "1. .venv/bin/video-translator doctor"
+echo "2. .venv/bin/video-translator prepare --help"
+echo "3. .venv/bin/video-translator render --help"

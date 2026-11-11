@@ -1,4 +1,4 @@
-.PHONY: bootstrap doctor test run clean
+.PHONY: bootstrap doctor test clean
 
 bootstrap:
 	./scripts/bootstrap.sh
@@ -8,9 +8,6 @@ doctor:
 
 test:
 	.venv/bin/pytest
-
-run:
-	.venv/bin/video-translator serve
 
 clean:
 	rm -rf .pytest_cache .coverage
