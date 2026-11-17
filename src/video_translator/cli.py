@@ -13,6 +13,7 @@ import httpx
 
 from .errors import VideoTranslatorError
 from .models import JobManifest, PipelineOptions
+from .pipeline.kokoro import MODEL_DIR, check_runtime
 from .pipeline.runner import VideoTranslationPipeline
 from .runtime import resolve_media_binaries
 from .settings import Settings, get_settings
@@ -39,7 +40,6 @@ def doctor(settings: Settings, *, check_translator: bool = False) -> int:
     for package, label in (
         ("yt_dlp", "yt-dlp"),
         ("faster_whisper", "faster-whisper"),
-        ("edge_tts", "edge-tts"),
     ):
         available = importlib.util.find_spec(package) is not None
         failed = failed or not available
@@ -48,6 +48,14 @@ def doctor(settings: Settings, *, check_translator: bool = False) -> int:
             available,
             "已安装" if available else "未安装",
         )
+
+    try:
+        check_runtime(settings.tts_voice)
+        voices = ", ".join(sorted(path.stem for path in MODEL_DIR.glob("z[fm]_[0-9][0-9][0-9].pt")))
+        _print_check("Kokoro", True, f"当前 {settings.tts_voice}，已安装 {voices}")
+    except VideoTranslatorError as exc:
+        failed = True
+        _print_check("Kokoro", False, str(exc))
 
     deno = shutil.which("deno")
     venv_deno = Path(sys.prefix) / "bin" / "deno"

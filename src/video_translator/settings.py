@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
-from unicodedata import normalize
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .errors import ConfigurationError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+KOKORO_DEFAULT_VOICE = "zm_010"
+KOKORO_DEFAULT_SPEED = 1.12
 
 
 class Settings(BaseSettings):
@@ -55,24 +57,10 @@ class Settings(BaseSettings):
     translator_timeout_seconds: float = 180
     translation_batch_size: int = 12
 
-    tts_provider: Literal["edge", "http", "cosyvoice"] = "edge"
-    tts_voice: str = "zh-CN-XiaoxiaoNeural"
-    tts_rate: str = "+0%"
-    tts_volume: str = "+0%"
-    tts_http_url: str | None = None
-    tts_http_api_key: str | None = None
-    cosyvoice_base_url: str = "http://127.0.0.1:50000"
-    cosyvoice_mode: Literal[
-        "sft",
-        "zero_shot",
-        "cross_lingual",
-        "instruct",
-        "instruct2",
-    ] = "sft"
-    cosyvoice_prompt_wav: Path | None = None
-    cosyvoice_prompt_text: str = ""
-    cosyvoice_instruct_text: str = ""
-    cosyvoice_sample_rate: int = 22050
+    tts_provider: Literal["kokoro"] = "kokoro"
+    tts_voice: str = KOKORO_DEFAULT_VOICE
+    tts_rate: float = Field(default=KOKORO_DEFAULT_SPEED, gt=0, allow_inf_nan=False)
+    tts_threads: int = Field(default=4, gt=0)
 
     keep_original_audio: bool = True
     duck_original_audio: bool = True
@@ -84,11 +72,11 @@ class Settings(BaseSettings):
     @field_validator("tts_voice")
     @classmethod
     def validate_tts_voice(cls, voice: str) -> str:
-        name = normalize("NFKC", voice).partition("(")[0].strip().casefold()
-        if name == "sandy" or (
-            name.startswith("com.apple.eloquence.") and name.endswith(".sandy")
-        ):
-            raise ConfigurationError("Sandy 配音音色已停用，请选择其他音色。")
+        voice = voice.strip().lower()
+        if not re.fullmatch(r"z[fm]_[0-9]{3}", voice):
+            raise ConfigurationError(
+                f"只支持 Kokoro 普通话音色。请将 VT_TTS_VOICE 设置为已安装的音色，例如 {KOKORO_DEFAULT_VOICE}。"
+            )
         return voice
 
     @model_validator(mode="after")

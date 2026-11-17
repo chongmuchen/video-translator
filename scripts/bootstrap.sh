@@ -3,16 +3,21 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+supports_kokoro() {
+  "$1" -c 'import sys; raise SystemExit(not (3, 10) <= sys.version_info[:2] <= (3, 12))'
+}
+
 pick_python() {
-  if [[ -n "${PYTHON:-}" ]] && "$PYTHON" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+  local candidate resolved
+  if [[ -n "${PYTHON:-}" ]] && supports_kokoro "$PYTHON"; then
     printf '%s\n' "$PYTHON"
     return
   fi
 
   for candidate in \
-    python3.13 python3.12 python3.11 python3.10 python3 \
-    /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 \
-    /usr/local/bin/python3.13 /usr/local/bin/python3.12; do
+    python3.12 python3.11 python3.10 python3 \
+    /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3.10 \
+    /usr/local/bin/python3.12 /usr/local/bin/python3.11 /usr/local/bin/python3.10; do
     if command -v "$candidate" >/dev/null 2>&1; then
       resolved="$(command -v "$candidate")"
     elif [[ -x "$candidate" ]]; then
@@ -20,7 +25,7 @@ pick_python() {
     else
       continue
     fi
-    if "$resolved" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+    if supports_kokoro "$resolved"; then
       printf '%s\n' "$resolved"
       return
     fi
@@ -29,13 +34,16 @@ pick_python() {
   return 1
 }
 
-if [[ -x .venv/bin/python ]] &&
-   .venv/bin/python -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+if [[ -x .venv/bin/python ]]; then
+  if ! supports_kokoro .venv/bin/python; then
+    echo "Kokoro requires Python 3.10–3.12. Move the existing .venv aside and rerun bootstrap." >&2
+    exit 1
+  fi
   echo "Using existing virtual environment: $PWD/.venv"
 else
   PYTHON_BIN="$(pick_python || true)"
   if [[ -z "$PYTHON_BIN" ]]; then
-    echo "Python 3.10+ is required."
+    echo "Kokoro requires Python 3.10–3.12."
     echo "Install Python 3.12, or run: PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh"
     exit 1
   fi
@@ -45,7 +53,7 @@ fi
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e ".[all,dev]"
 
-# Fetch a project-local ffmpeg/ffprobe only when the machine has neither.
+# Provision the project-local Kokoro runtime and missing media executables.
 .venv/bin/python -m video_translator.bootstrap
 
 echo

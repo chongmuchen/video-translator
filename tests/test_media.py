@@ -1,13 +1,13 @@
-import hashlib
 import logging
 import wave
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from video_translator.errors import ConfigurationError
 from video_translator.models import Segment
-from video_translator.pipeline import media, synthesizer
+from video_translator.pipeline import kokoro, media, synthesizer
 from video_translator.pipeline.media import (
     DubbingOverflowError,
     _format_srt_timestamp,
@@ -89,69 +89,65 @@ def test_normalize_reports_all_overflow_before_aligning(tmp_path, monkeypatch) -
     assert not output.exists()
 
 
-def test_synthesis_cache_reuses_unchanged_lines(tmp_path, monkeypatch) -> None:
+def test_kokoro_cache_reuses_matching_audio_and_tracks_voice_and_rate(tmp_path, monkeypatch) -> None:
     generated = []
 
-    def save(text, path):
-        generated.append(text)
-        path.write_text(text, encoding="utf-8")
+    def save(engine, text, path):
+        generated.append((engine.voice_id, engine.speed, text))
+        make_silence(path, 0.1)
 
-    settings = Settings(data_dir=tmp_path, tts_provider="edge", tts_voice="voice-a")
+    settings = Settings(data_dir=tmp_path)
     speech = synthesizer.SpeechSynthesizer(settings, logging.getLogger("test"))
-    monkeypatch.setattr(speech, "synthesize", save)
-    monkeypatch.setattr(
-        synthesizer, "resolve_media_binaries", lambda settings: MediaBinaries("", "")
-    )
-    monkeypatch.setattr(synthesizer, "probe_audio_duration", lambda path, media: 1.0)
-    segments = [
-        Segment(index=0, start=0, end=1, source_text="Hello", translated_text="你好"),
-        Segment(index=1, start=1, end=2, source_text="Goodbye", translated_text="再见"),
-    ]
-    speech.synthesize_segments(segments, tmp_path)
-    segments[1].translated_text = "回头见"
-    speech.synthesize_segments(segments, tmp_path)
-    assert generated == ["你好", "再见", "回头见"]
+    monkeypatch.setattr(kokoro.LocalSpeech, "synthesize", save)
+    segment = Segment(index=0, start=0, end=1, source_text="Hello", translated_text="你好")
+    legacy = tmp_path / "00000-old-provider.mp3"
+    legacy.write_bytes(b"existing audio")
 
-    settings.tts_voice = "voice-b"
-    speech.synthesize_segments(segments, tmp_path)
-    assert generated[-2:] == ["你好", "回头见"]
+    speech.synthesize_segments([segment], tmp_path)
+    original = Path(segment.tts_file)
+    assert original.suffix == ".wav"
+    assert legacy.read_bytes() == b"existing audio"
+
+    speech.synthesize_segments([segment], tmp_path)
+    assert Path(segment.tts_file) == original
+    assert generated == [("zm_010", 1.12, "你好")]
+
+    settings.tts_voice = "zf_001"
+    speech.synthesize_segments([segment], tmp_path)
+    alternate = Path(segment.tts_file)
+    assert alternate != original
+
+    settings.tts_rate = 1.25
+    speech.synthesize_segments([segment], tmp_path)
+    assert Path(segment.tts_file) != alternate
+    assert generated[-2:] == [("zf_001", 1.12, "你好"), ("zf_001", 1.25, "你好")]
+
+    Path(segment.tts_file).write_bytes(b"incomplete wav")
+    speech.synthesize_segments([segment], tmp_path)
+    assert generated[-2:] == [("zf_001", 1.25, "你好")] * 2
 
 
 @pytest.mark.parametrize(
     "voice",
-    ["Sandy", " sandy（中文（中国大陆）） ", "com.apple.eloquence.zh-CN.Sandy"],
+    ["Sandy (中文（中国大陆）)", "Reed", "Tingting", "com.apple.eloquence.zh-CN.Sandy", "Seed"],
 )
-def test_sandy_cannot_be_selected(tmp_path, voice) -> None:
-    with pytest.raises(ConfigurationError, match="Sandy 配音音色已停用"):
+def test_only_kokoro_voices_are_accepted(tmp_path, voice) -> None:
+    with pytest.raises(ConfigurationError, match="只支持 Kokoro 普通话音色"):
         Settings(data_dir=tmp_path, tts_voice=voice)
 
     copied = Settings(data_dir=tmp_path).model_copy(update={"tts_voice": voice})
-    with pytest.raises(ConfigurationError, match="Sandy 配音音色已停用"):
+    with pytest.raises(ConfigurationError, match="只支持 Kokoro 普通话音色"):
         synthesizer.SpeechSynthesizer(copied, logging.getLogger("test"))
 
 
-def test_sandy_cannot_reuse_cached_audio_after_voice_change(tmp_path, monkeypatch) -> None:
-    settings = Settings(data_dir=tmp_path, tts_voice="Reed")
-    speech = synthesizer.SpeechSynthesizer(settings, logging.getLogger("test"))
-    settings.tts_voice = "Sandy"
-    segment = Segment(index=0, start=0, end=1, source_text="Hello", translated_text="你好")
-    key = hashlib.sha256(speech._voice_fingerprint() + "你好".encode()).hexdigest()
-    cache = tmp_path / f"00000-{key}.mp3"
-    cache.write_bytes(b"existing audio")
-    monkeypatch.setattr(
-        synthesizer, "resolve_media_binaries", lambda settings: MediaBinaries("", "")
-    )
-    monkeypatch.setattr(synthesizer, "probe_audio_duration", lambda path, media: 1.0)
+@pytest.mark.parametrize("provider", ["edge", "http", "cosyvoice", "macos", "seed"])
+def test_only_kokoro_provider_is_accepted(tmp_path, provider) -> None:
+    with pytest.raises(ValidationError, match="kokoro"):
+        Settings(data_dir=tmp_path, tts_provider=provider)
 
-    with pytest.raises(ConfigurationError, match="Sandy 配音音色已停用"):
-        speech.synthesize_segments([segment], tmp_path)
-    assert segment.tts_file is None
-    assert cache.read_bytes() == b"existing audio"
-
-    output = tmp_path / "single" / "audio.mp3"
-    with pytest.raises(ConfigurationError, match="Sandy 配音音色已停用"):
-        speech.synthesize("你好", output)
-    assert not output.parent.exists()
+    settings = Settings(data_dir=tmp_path).model_copy(update={"tts_provider": provider})
+    with pytest.raises(ConfigurationError, match="配音只支持本机 Kokoro"):
+        synthesizer.SpeechSynthesizer(settings, logging.getLogger("test"))
 
 
 def test_compose_timeline_preserves_duration(tmp_path: Path) -> None:

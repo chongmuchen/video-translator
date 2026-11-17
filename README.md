@@ -12,16 +12,18 @@
 
 ## 安装和检查
 
-在 macOS 或 Linux 的项目根目录运行。需要 Python 3.10～3.13，推荐 3.12。
+在 macOS 或 Linux 的项目根目录运行。需要 Python 3.10～3.12，推荐 3.12。
 
 ```bash
 ./scripts/bootstrap.sh
 .venv/bin/video-translator doctor
 ```
 
-安装脚本创建 `.venv`，安装识别、下载、TTS 和测试依赖，在缺少系统 FFmpeg 时下载项目本地版本。可用 `PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh` 指定解释器。默认配置无需创建 `.env`，需要修改时可从 `.env.example` 复制。
+安装脚本创建 `.venv`，安装识别、下载和测试依赖，以及项目本地的 Kokoro 中文模型和音色。在缺少系统 FFmpeg 时下载项目本地版本。可用 `PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh` 指定解释器。默认配置无需创建 `.env`，需要修改时可从 `.env.example` 复制。
 
-首次语音识别可能需要下载 Whisper 模型。默认使用 `large-v3`，初次冒烟可在命令前设置 `VT_ASR_MODEL=tiny`。Edge TTS 默认在线生成配音，也可按 `.env.example` 配置 HTTP TTS 或 CosyVoice。
+首次语音识别可能需要下载 Whisper 模型。默认使用 `large-v3`，初次冒烟可在命令前设置 `VT_ASR_MODEL=tiny`。
+
+配音使用本地 Kokoro 82M v1.1 中文模型。默认音色为 `zm_010`，合成语速为 `1.12`。运行 `doctor` 查看已安装的音色，设置 `VT_TTS_VOICE=zf_001` 可改用该音色。其他兼容音色的官方 `.pt` 文件放在 `.runtime/puzzle-kokoro-model/` 下即可选择。
 
 ## Codex 操作流程
 
@@ -59,7 +61,7 @@
 
 渲染失败时读取 `failed_stage`、`error` 和 `log_path`。若 `overflow_segments` 有数据，它会列出超时台词的片段编号、配音时长和时间槽长度。跨字幕片段的整句用 `cue_ids` 列出涉及的编号。缩短相应译文后，使用同一个任务 ID 再跑 `render`，会复用视频、转写和未改动的有效配音。每次成功渲染会把 MP4 和两份字幕一起写入新的版本目录，便于对照验收。旧任务若缺少原视频或转写文件，需要重新执行 `prepare`。
 
-先用一段短片验收。确认 MP4 默认播放中文音轨，两份 SRT 都能加载，时间码在视频范围内，并抽听密集句和专业术语。真实 YouTube 下载、模型推理和在线 TTS 可用性随运行环境而变化。项目的集成测试用真实 FFmpeg 和替代模型验证编排与输出：
+先用一段短片验收。确认 MP4 默认播放中文音轨，两份 SRT 都能加载，时间码在视频范围内，并抽听密集句和专业术语。项目的集成测试用真实 FFmpeg 和替代模型验证编排与输出：
 
 ```bash
 .venv/bin/pytest
