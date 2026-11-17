@@ -5,9 +5,12 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from unicodedata import normalize
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .errors import ConfigurationError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +80,16 @@ class Settings(BaseSettings):
     enable_demucs: bool = False
     dub_sample_rate: int = 24000
     max_tempo_factor: float = 1.8
+
+    @field_validator("tts_voice")
+    @classmethod
+    def validate_tts_voice(cls, voice: str) -> str:
+        name = normalize("NFKC", voice).partition("(")[0].strip().casefold()
+        if name == "sandy" or (
+            name.startswith("com.apple.eloquence.") and name.endswith(".sandy")
+        ):
+            raise ConfigurationError("Sandy 配音音色已停用，请选择其他音色。")
+        return voice
 
     @model_validator(mode="after")
     def resolve_paths(self) -> "Settings":

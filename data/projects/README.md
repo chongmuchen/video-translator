@@ -14,6 +14,9 @@
 | 《蔚蓝》的关卡设计（GDC 2017） | [celeste-level-design](celeste-level-design/) | [成片和双语字幕](celeste-level-design/delivery/) |
 | 《指南针：解谜游戏设计课》 · 三节正课及三场问答 | [the-compass-puzzle-design](the-compass-puzzle-design/) | [按集数播放](the-compass-puzzle-design/delivery/按集数播放.m3u8) |
 | GMTK ·《念力破磁》开发日志（Mind Over Magnet） | [gmtk-mind-over-magnet](gmtk-mind-over-magnet/) | [按原列表顺序播放](gmtk-mind-over-magnet/delivery/按原列表顺序播放.m3u8) |
+| 玩家的大脑 · 神经科学与用户体验如何影响游戏设计（GDC 2015） | [the-gamers-brain-gdc](the-gamers-brain-gdc/) | [成片和双语字幕](the-gamers-brain-gdc/delivery/) |
+| Elyot Grant · 谜题设计 30 课（导演加长版） | [puzzle-design-lessons-30](puzzle-design-lessons-30/) | [按原顺序播放](puzzle-design-lessons-30/delivery/按原顺序播放.m3u8) |
+| 用设计教玩家：《Mushroom 11》的教程设计（GDC 2017） | [mushroom-11-teaching-by-design](mushroom-11-teaching-by-design/) | [成片和双语字幕](mushroom-11-teaching-by-design/delivery/) |
 
 每个项目的 `delivery/` 存放最终 MP4 和双语字幕，系列项目还附有播放列表。`repair/` 存放逐句译稿、时间码、配音和修订脚本。`job/` 可另存原始媒体、原文和任务记录。
 

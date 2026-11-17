@@ -68,6 +68,7 @@ class SpeechSynthesizer:
     def __init__(self, settings: Settings, logger: logging.Logger):
         self.settings = settings
         self.logger = logger
+        settings.validate_tts_voice(settings.tts_voice)
 
     async def _edge_save(self, text: str, output: Path) -> None:
         try:
@@ -186,6 +187,7 @@ class SpeechSynthesizer:
             audio.writeframes(response.content)
 
     def synthesize(self, text: str, output: Path) -> None:
+        self.settings.validate_tts_voice(self.settings.tts_voice)
         output.parent.mkdir(parents=True, exist_ok=True)
         if self.settings.tts_provider == "edge":
             asyncio.run(self._edge_save(text, output))
@@ -231,6 +233,7 @@ class SpeechSynthesizer:
         segments: list[Segment],
         output_dir: Path,
     ) -> list[Segment]:
+        self.settings.validate_tts_voice(self.settings.tts_voice)
         output_dir.mkdir(parents=True, exist_ok=True)
         voice_fingerprint = self._voice_fingerprint()
         extension = ".wav" if self.settings.tts_provider == "cosyvoice" else ".mp3"
