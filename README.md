@@ -36,7 +36,7 @@
 ```
 
 1. `prepare` 获取视频并识别语音，返回 `status=prepared`、`job_id`、`detected_language`、`segments_path`、`translations_path` 和 `log_path`。原文语言默认自动识别，已知时可加 `--source-language en` 等语言代码。加 `--no-original-audio` 可以省略独立的原声音轨。
-2. Codex 从 `segments_path` 读取原文。每个片段有 `index`、`start`、`end` 和 `source_text`。短视频可通读全文，长视频可按话题分批，并共享人名、术语和前后文。将译稿写入 `translations_path`，每个片段用原来的 `index` 作为 `id`，不改原文或时间戳。
+2. 通过 ChatGPT 登录的 Codex 使用 Pro 会员额度，从 `segments_path` 读取原文。每个片段有 `index`、`start`、`end` 和 `source_text`。短视频可通读全文，长视频可按话题分批，并共享人名、术语和前后文。在最后一轮中文定稿中同时判断疑难多音字，将正文和可选读音标记写入 `translations_path`，每个片段用原来的 `index` 作为 `id`。会员额度不足时暂停，API 额度始终禁用。
 3. `render` 读入译稿，生成配音、对齐时间、混音并导出两份字幕。也可通过 `--translations /path/to/translations.json` 提供译稿。完成时返回 `status=completed`，`output_path` 是 MP4，`subtitle_path` 和 `english_subtitle_path` 分别是中文和英文 SRT。
 
 英文原声的英文字幕直接使用原文，译稿只提供简体中文口语：
@@ -55,6 +55,22 @@
 
 原声音轨默认独立保留，中文配音音轨还会混入压低的原声。
 
+## 多音字读音
+
+`pronunciations` 是可选的读音标记列表。Codex 在生成中文正文的同一次请求中，只为读法明确、容易误读的汉字添加标记。例如“得”在“你得记住”中读 děi，在“她得了第一名”中读 dé，在“说得很好”中读轻声 de。
+
+```json
+{"segments":[{"id":0,"text":"你得记住。","pronunciations":[{"start":1,"char":"得","pinyin":"dei3"}]}]}
+```
+
+- `start` 是目标字在该条 `text` 中从 0 开始的字符位置，空格和标点也计数。
+- `char` 是这个位置的一个汉字，用来核对标记是否仍匹配正文。
+- `pinyin` 使用小写拼音和声调数字，1～4 为四声，5 为轻声，ü 写成 v，例如 `dei3`、`de2`、`de5`、`lv4`。
+
+普通句省略整个 `pronunciations` 字段。中文定稿后同步标注，随后修稿时同步更新位置和读音。相同汉字在一句里出现多次时按各自位置指定，字幕仍从 `text` 输出。旧译稿直接使用默认发音。
+
+Kokoro 在本机把标记转换为音素，也就是模型使用的发音符号。标记随整句拼接、拆句和任务保存传递，读音改变会重新生成对应句子的配音。位置不匹配或重复的标记会在导入时报告错误，合法格式但本机词典不支持的读音会记录提示并按默认读音合成。生成音频无需云端额度。
+
 ## 重试与验收
 
 `--json` 将任务结果写入标准输出，进度与诊断写入标准错误和任务日志。默认中间文件在 `data/jobs/<job_id>/`，CLI 渲染结果写入 `data/outputs/`。用任务返回的绝对路径定位文件。验收后，将选定版本和双语字幕归入对应项目的 `data/projects/<项目名>/delivery/`。
@@ -67,18 +83,4 @@
 .venv/bin/pytest
 ```
 
-## 可选的全自动翻译
-
-需要脱离 Codex 批量处理时，可在 `.env` 中为 `translate` 设置 OpenAI-compatible 翻译服务。它可连接 Ollama、LM Studio 或兼容云服务。Codex 提供译稿的 `prepare` / `render` 路径无需这项服务。
-
-```dotenv
-VT_TRANSLATOR_BASE_URL=http://127.0.0.1:11434/v1
-VT_TRANSLATOR_MODEL=qwen3:8b
-```
-
-```bash
-.venv/bin/video-translator doctor --check-translator
-.venv/bin/video-translator translate 'https://www.youtube.com/watch?v=VIDEO_ID' --json
-```
-
-全自动路径也会输出双语外置字幕。已有的 `--burn-subtitles` 选项可额外把中文字幕烧进画面。
+旧 `translate` 服务调用入口已停用。历史配置仍可读取，运行时会提示使用上述 Codex 流程。`passthrough` 仅供离线管线测试。

@@ -48,9 +48,7 @@ class Settings(BaseSettings):
     asr_compute_type: str = "auto"
     source_language: str | None = None
 
-    translator_provider: Literal["openai_compatible", "passthrough"] = (
-        "openai_compatible"
-    )
+    translator_provider: Literal["codex", "openai_compatible", "passthrough"] = "codex"
     translator_base_url: str = "http://127.0.0.1:11434/v1"
     translator_model: str = "qwen3:8b"
     translator_api_key: str | None = None

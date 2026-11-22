@@ -34,7 +34,12 @@ from .media import (
 )
 from .synthesizer import SpeechSynthesizer, WordTiming, read_word_timings
 from .transcriber import FasterWhisperTranscriber
-from .translator import SegmentTranslator, translation_map
+from .translator import (
+    SegmentTranslator,
+    apply_translation_response,
+    check_translation_provider,
+    translation_map,
+)
 from .utterances import build_utterances, retime_chinese_cues
 
 
@@ -93,17 +98,16 @@ class VideoTranslationPipeline:
             except (OSError, UnicodeError) as exc:
                 raise PipelineError(f"无法读取译稿：{translation_path}") from exc
 
-            chinese = translation_map(segments, content)
             english = {} if _is_english(current) else translation_map(segments, content, field="en")
-            for segment in segments:
-                segment.translated_text = chinese[segment.index]
+            apply_translation_response(segments, content)
             self._save_translations(current, segments, english)
             self._render(current, job_dir, logger, segments, english)
             return current
 
     def run(self, manifest: JobManifest) -> JobManifest:
-        """Use the configured translation service for an unattended run."""
+        """Retain the offline passthrough entry point for pipeline verification."""
         with self._processing(manifest.id) as (current, job_dir, logger):
+            check_translation_provider(self.settings)
             segments = self._prepare(current, job_dir, logger)
             self.store.set_stage(current, JobStatus.translating, 42, "翻译为中文")
             translator = SegmentTranslator(self.settings, logger)
@@ -115,7 +119,8 @@ class VideoTranslationPipeline:
             english: dict[int, str] = {}
             if not _is_english(current):
                 english_segments = [
-                    segment.model_copy(update={"translated_text": None}) for segment in segments
+                    segment.model_copy(update={"translated_text": None, "pronunciations": []})
+                    for segment in segments
                 ]
                 translator.translate(
                     english_segments, target_language="English", glossary={}
@@ -193,6 +198,8 @@ class VideoTranslationPipeline:
         rows = []
         for segment in segments:
             row = {"id": segment.index, "text": segment.translated_text}
+            if segment.pronunciations:
+                row["pronunciations"] = [reading.model_dump() for reading in segment.pronunciations]
             if english:
                 row["en"] = english[segment.index]
             rows.append(row)

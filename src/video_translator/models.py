@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -27,14 +27,36 @@ class JobStatus(str, Enum):
     failed = "failed"
 
 
+class Pronunciation(BaseModel):
+    """One contextual reading, indexed by Unicode character in the translated text."""
+
+    start: int = Field(ge=0, strict=True)
+    char: str = Field(pattern=r"^[\u3400-\u9fff\uf900-\ufaff\U00020000-\U000323af]$")
+    pinyin: str = Field(pattern=r"^[a-z]+[1-5]$")
+
+
 class Segment(BaseModel):
     index: int
     start: float = Field(ge=0)
     end: float = Field(gt=0)
     source_text: str
     translated_text: str | None = None
+    pronunciations: list[Pronunciation] = Field(default_factory=list)
     speaker: str | None = None
     tts_file: str | None = None
+
+    @model_validator(mode="after")
+    def validate_pronunciations(self) -> "Segment":
+        text = self.translated_text or ""
+        positions = set()
+        for reading in self.pronunciations:
+            if text[reading.start:reading.start + 1] != reading.char:
+                raise ValueError(f"读音标记位置 {reading.start} 与译文中的 {reading.char} 不匹配")
+            if reading.start in positions:
+                raise ValueError(f"读音标记位置 {reading.start} 重复")
+            positions.add(reading.start)
+        self.pronunciations.sort(key=lambda reading: reading.start)
+        return self
 
     @property
     def duration(self) -> float:

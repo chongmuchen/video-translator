@@ -1,6 +1,6 @@
 import pytest
 
-from video_translator.models import Segment
+from video_translator.models import Pronunciation, Segment
 from video_translator.pipeline.utterances import build_utterances, retime_chinese_cues
 
 
@@ -107,3 +107,35 @@ def test_ascii_fragments_keep_spaces_and_overlaps_are_bounded_by_video():
     retimed = retime_chinese_cues(plan)
     assert retimed[0].end == pytest.approx(retimed[1].start)
     assert retimed[1].end == 4
+
+
+def test_pronunciations_follow_split_and_joined_sentences_with_spaces():
+    first = cue(0, 0, 4, "  得了第一名。  你得  ")
+    first.pronunciations = [
+        Pronunciation(start=2, char="得", pinyin="de2"),
+        Pronunciation(start=11, char="得", pinyin="dei3"),
+    ]
+    second = cue(1, 4, 6, " 记住。说得 ")
+    second.pronunciations = [Pronunciation(start=5, char="得", pinyin="de5")]
+    third = cue(2, 6, 7, " 好。")
+    plan = build_utterances([first, second, third])
+    assert [item.segment.translated_text for item in plan] == [
+        "得了第一名。", "你得记住。", "说得好。",
+    ]
+    assert [[reading.model_dump() for reading in item.segment.pronunciations] for item in plan] == [
+        [{"start": 0, "char": "得", "pinyin": "de2"}],
+        [{"start": 1, "char": "得", "pinyin": "dei3"}],
+        [{"start": 1, "char": "得", "pinyin": "de5"}],
+    ]
+    assert [item.pronunciations for item in retime_chinese_cues(plan)] == [
+        first.pronunciations, second.pronunciations, third.pronunciations,
+    ]
+
+
+def test_pronunciation_offset_accounts_for_inserted_ascii_space():
+    first = cue(0, 0, 1, "Game")
+    second = cue(1, 1, 2, "Boy你得记住。")
+    second.pronunciations = [Pronunciation(start=4, char="得", pinyin="dei3")]
+    combined = build_utterances([first, second])[0].segment
+    assert combined.translated_text == "Game Boy你得记住。"
+    assert combined.pronunciations[0].start == 9

@@ -50,6 +50,7 @@ class _SentencePiece:
     cue: Segment
     ordinal: int
     text: str
+    text_offset: int
     start: float
     end: float
     closes_sentence: bool
@@ -105,7 +106,8 @@ def _track_closing_marks(text: str, pending: list[str]) -> bool:
 def _split_cue(
     cue: Segment, start: float, end: float, pending: list[str]
 ) -> list[_SentencePiece]:
-    text = (cue.translated_text or "").strip()
+    raw_text = cue.translated_text or ""
+    text = raw_text.strip()
     if not _spoken_characters(text):
         raise PipelineError(f"片段 {cue.index} 的译稿没有可朗读的文字。")
 
@@ -134,10 +136,14 @@ def _split_cue(
     pieces: list[_SentencePiece] = []
     cumulative = 0
     piece_start = start
+    text_offset = len(raw_text) - len(raw_text.lstrip())
     for ordinal, ((part, closes_sentence), weight) in enumerate(zip(parts, weights)):
         cumulative += weight
         piece_end = start + (end - start) * cumulative / total_weight
-        pieces.append(_SentencePiece(cue, ordinal, part, piece_start, piece_end, closes_sentence))
+        pieces.append(_SentencePiece(
+            cue, ordinal, part, text_offset, piece_start, piece_end, closes_sentence
+        ))
+        text_offset += len(part)
         piece_start = piece_end
     return pieces
 
@@ -145,6 +151,7 @@ def _split_cue(
 def _pack_utterance(pieces: list[_SentencePiece], stride: int) -> Utterance:
     text = ""
     fragments = []
+    pronunciations = []
     for piece in pieces:
         spoken = piece.text.strip()
         if (
@@ -155,6 +162,12 @@ def _pack_utterance(pieces: list[_SentencePiece], stride: int) -> Utterance:
             and spoken[0].isalnum()
         ):
             text += " "
+        original_start = piece.text_offset + len(piece.text) - len(piece.text.lstrip())
+        for reading in piece.cue.pronunciations:
+            if original_start <= reading.start < original_start + len(spoken):
+                pronunciations.append(reading.model_copy(update={
+                    "start": len(text) + reading.start - original_start,
+                }))
         text += spoken
         fragments.append(CueFragment(piece.cue, piece.text, piece.start, piece.end))
     first = pieces[0]
@@ -164,6 +177,7 @@ def _pack_utterance(pieces: list[_SentencePiece], stride: int) -> Utterance:
         end=pieces[-1].end,
         source_text=first.cue.source_text,
         translated_text=text,
+        pronunciations=pronunciations,
         speaker=first.cue.speaker,
     )
     return Utterance(segment=segment, fragments=tuple(fragments))

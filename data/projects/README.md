@@ -2,7 +2,7 @@
 
 每个子目录对应一项翻译任务。目录名也是恢复时使用的名称。
 
-| 项目 | 项目目录 | 成片位置 |
+| 项目 | 项目目录 | 交付位置 |
 | --- | --- | --- |
 | 猎天使魔女 · 神谷英树 69 段导演解说 | [bayonetta-69](bayonetta-69/) | [按集数播放](bayonetta-69/delivery/按集数播放.m3u8) |
 | 樱井政博 A 系列 | [sakurai-a](sakurai-a/) | [播放顺序](sakurai-a/delivery/播放顺序.m3u8) |
@@ -17,8 +17,12 @@
 | 玩家的大脑 · 神经科学与用户体验如何影响游戏设计（GDC 2015） | [the-gamers-brain-gdc](the-gamers-brain-gdc/) | [成片和双语字幕](the-gamers-brain-gdc/delivery/) |
 | Elyot Grant · 谜题设计 30 课（导演加长版） | [puzzle-design-lessons-30](puzzle-design-lessons-30/) | [按原顺序播放](puzzle-design-lessons-30/delivery/按原顺序播放.m3u8) |
 | 用设计教玩家：《Mushroom 11》的教程设计（GDC 2017） | [mushroom-11-teaching-by-design](mushroom-11-teaching-by-design/) | [成片和双语字幕](mushroom-11-teaching-by-design/delivery/) |
+| 丹·威尔斯《七点故事结构》（LTUE 2010，五集） | [dan-wells-story-structure](dan-wells-story-structure/) | [按集数播放](dan-wells-story-structure/delivery/按集数播放.m3u8) |
+| Jean Fraisse《动画与游戏项目插画》全课（18 节正课及结课项目） | [domestika-jean-fraisse](domestika-jean-fraisse/) | [全课 1080p 普通话配音视频](domestika-jean-fraisse/delivery/全课程_按顺序播放.m3u8) · [A4 中文讲稿](domestika-jean-fraisse/delivery/动画与游戏项目插画_A4_中文译稿.pdf) |
+| Hugo Bille《超级银河战士的无形之手》 | [super-metroid-invisible-hand](super-metroid-invisible-hand/) | [A3 横版中英对照 PDF](super-metroid-invisible-hand/delivery/超级银河战士的无形之手_A3横版_中英对照.pdf) · [A4 中文译稿 PDF](super-metroid-invisible-hand/delivery/超级银河战士的无形之手_A4竖版_中文译稿.pdf) |
+| 《能干的猎人》 · 格林童话的视觉开发 | [the-skillful-huntsman](the-skillful-huntsman/) | [A3 横版中英对照 PDF](the-skillful-huntsman/delivery/能干的猎人_A3横版_中英对照.pdf) |
 
-每个项目的 `delivery/` 存放最终 MP4 和双语字幕，系列项目还附有播放列表。`repair/` 存放逐句译稿、时间码、配音和修订脚本。`job/` 可另存原始媒体、原文和任务记录。
+每个项目的 `delivery/` 存放交付文件。视频项目含最终 MP4 和双语字幕，系列项目还附有播放列表。`repair/` 存放翻译和修订所需的资料。`job/` 可另存原始媒体、原文和任务记录。
 
 以《猎天使魔女》为例，在 Finder 将 `data/projects/bayonetta-69` 整个文件夹拷到外置盘。拷完可从外置盘打开 `delivery/按集数播放.m3u8`。如果要逐文件比较，可在仓库根目录运行下面的命令，将第二个路径换成外置盘上的实际位置。命令只比较文件，无差异时无输出。
 

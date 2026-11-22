@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import sys
@@ -14,8 +15,9 @@ from threading import Lock
 from types import SimpleNamespace
 
 from ..errors import ConfigurationError, PipelineError
-from ..models import Segment
+from ..models import Pronunciation, Segment
 from ..settings import KOKORO_DEFAULT_SPEED, KOKORO_DEFAULT_VOICE, PROJECT_ROOT, Settings
+from .pronunciation import PronunciationG2P
 
 VOICE = KOKORO_DEFAULT_VOICE
 SPEED = KOKORO_DEFAULT_SPEED
@@ -97,16 +99,24 @@ class LocalSpeech:
         style = torch.load(MODEL_DIR / f"{self.voice_id}.pt", map_location="cpu", weights_only=True)
         return pipeline, style, np, sf.write
 
-    def synthesize(self, text: str, output: Path) -> None:
+    def synthesize(
+        self, text: str, output: Path, *, pronunciations: list[Pronunciation] | None = None
+    ) -> None:
         if not text.strip():
             raise PipelineError("配音文本为空。")
         with ENGINE_LOCK:
             pipeline, style, np, write = self._engine
-            audio = [
-                result.audio.numpy()
-                for result in pipeline(text, voice=style, speed=self.speed)
-                if result.audio is not None and len(result.audio)
-            ]
+            original = pipeline.g2p
+            if pronunciations:
+                pipeline.g2p = PronunciationG2P(original, text, pronunciations)
+            try:
+                audio = [
+                    result.audio.numpy()
+                    for result in pipeline(text, voice=style, speed=self.speed)
+                    if result.audio is not None and len(result.audio)
+                ]
+            finally:
+                pipeline.g2p = original
         if not audio:
             raise PipelineError("Kokoro 没有生成音频。")
         signal = np.concatenate(audio)
@@ -122,15 +132,28 @@ class LocalSpeech:
 
     def synthesize_segments(self, segments: list[Segment], output_dir: Path) -> list[Segment]:
         for position, segment in enumerate(segments, 1):
-            text = (segment.translated_text or "").strip()
+            raw_text = segment.translated_text or ""
+            text = raw_text.strip()
             if not text:
                 raise PipelineError(f"片段 {segment.index} 没有可朗读的译文。")
-            key = hashlib.sha256(
-                f"kokoro-82m-v1.1-zh/{self.voice_id}/{self.speed}\0{text}".encode()
-            ).hexdigest()
+            leading = len(raw_text) - len(raw_text.lstrip())
+            readings = [
+                reading.model_copy(update={"start": reading.start - leading})
+                for reading in segment.pronunciations
+            ]
+            fingerprint = f"kokoro-82m-v1.1-zh/{self.voice_id}/{self.speed}\0{text}"
+            if readings:
+                fingerprint += "\0pronunciations-v1\0" + json.dumps(
+                    [reading.model_dump() for reading in sorted(readings, key=lambda item: item.start)],
+                    ensure_ascii=False, sort_keys=True,
+                )
+            key = hashlib.sha256(fingerprint.encode()).hexdigest()
             output = output_dir / f"{segment.index:05d}-{key}.wav"
             if not _valid_audio(output):
-                self.synthesize(text, output)
+                if readings:
+                    self.synthesize(text, output, pronunciations=readings)
+                else:
+                    self.synthesize(text, output)
             segment.tts_file = str(output)
             if position % 40 == 0:
                 LOG.info("已准备 %d/%d 个 Kokoro 配音片段", position, len(segments))

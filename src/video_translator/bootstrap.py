@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +97,7 @@ def _sha256(path: Path) -> str:
 
 def _install_model_assets() -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    curl = shutil.which("curl")
     for relative_path, expected_hash in MODEL_ASSETS.items():
         target = MODEL_DIR / Path(relative_path).name
         if target.is_file() and _sha256(target) == expected_hash:
@@ -106,15 +108,22 @@ def _install_model_assets() -> None:
         with NamedTemporaryFile(dir=MODEL_DIR, prefix=f".{target.name}-", delete=False) as temporary:
             staged = Path(temporary.name)
         try:
-            with httpx.stream("GET", url, follow_redirects=True, timeout=60) as response:
-                response.raise_for_status()
-                with staged.open("wb") as output:
-                    for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                        output.write(chunk)
+            if curl:
+                subprocess.run(
+                    [curl, "--fail", "--silent", "--show-error", "--location", "--retry", "2",
+                     "--connect-timeout", "15", "--max-time", "600", "--output", str(staged), url],
+                    check=True,
+                )
+            else:
+                with httpx.stream("GET", url, follow_redirects=True, timeout=60) as response:
+                    response.raise_for_status()
+                    with staged.open("wb") as output:
+                        for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                            output.write(chunk)
             if _sha256(staged) != expected_hash:
                 raise ConfigurationError(f"Kokoro 文件校验失败：{relative_path}")
             staged.replace(target)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, subprocess.CalledProcessError) as exc:
             raise ConfigurationError(f"Kokoro 文件下载失败：{relative_path}。{exc}") from exc
         finally:
             staged.unlink(missing_ok=True)

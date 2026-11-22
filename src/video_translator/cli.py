@@ -9,8 +9,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import httpx
-
 from .errors import VideoTranslatorError
 from .models import JobManifest, PipelineOptions
 from .pipeline.kokoro import MODEL_DIR, check_runtime
@@ -63,31 +61,11 @@ def doctor(settings: Settings, *, check_translator: bool = False) -> int:
     failed = failed or not deno
     _print_check("Deno / YouTube JS", bool(deno), deno or "未安装")
 
-    if not check_translator:
-        print("- 翻译服务         导入译稿时无需配置；用 --check-translator 检查自动翻译")
-    elif settings.translator_provider == "passthrough":
+    if check_translator and settings.translator_provider == "passthrough":
         _print_check("翻译服务", False, "passthrough 仅用于测试，不会翻译")
         failed = True
     else:
-        models_url = (
-            settings.translator_base_url.rstrip("/") + "/models"
-        )
-        try:
-            headers = {}
-            if settings.translator_api_key:
-                headers["Authorization"] = (
-                    f"Bearer {settings.translator_api_key}"
-                )
-            response = httpx.get(models_url, headers=headers, timeout=5)
-            reachable = response.is_success
-            detail = (
-                f"{settings.translator_model} /models HTTP {response.status_code}"
-            )
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
-            reachable = False
-            detail = type(exc).__name__
-        failed = failed or not reachable
-        _print_check("翻译服务", reachable, detail)
+        print("- 翻译             使用 ChatGPT 登录的 Codex Pro 写译稿，再运行 render")
 
     settings.ensure_directories()
     _print_check("数据目录", True, str(settings.data_dir))
@@ -209,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument(
         "--check-translator",
         action="store_true",
-        help="同时检查自动翻译服务的 /models 接口",
+        help="显示翻译入口配置（兼容旧命令）",
     )
     subparsers.add_parser(
         "bootstrap-media",
@@ -233,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     translate = subparsers.add_parser(
         "translate",
-        help="通过配置的翻译服务处理一个 URL 或本地视频",
+        help="旧入口；翻译请使用 prepare 和 render，passthrough 仅供离线测试",
     )
     for source_command in (prepare, translate):
         source_command.add_argument("source", help="YouTube/B站 URL 或本地视频路径")

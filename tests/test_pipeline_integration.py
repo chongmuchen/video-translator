@@ -155,6 +155,7 @@ def test_end_to_end_runner_with_fake_model_adapters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings, media, source = local_clip
+    settings = settings.model_copy(update={"translator_provider": "passthrough"})
     monkeypatch.setattr(runner, "SegmentTranslator", FakeTranslator)
     store = JobStore(settings)
     manifest = store.create(str(source), PipelineOptions())
@@ -318,3 +319,52 @@ def test_sentence_crossing_subtitle_cues_is_dubbed_without_padding(
         assert len(samples) == frames
         assert all(sample > 4096 for (sample,) in samples)
 
+
+
+def test_render_preserves_pronunciations_and_subtitle_text_on_rerender(local_clip, monkeypatch):
+    settings, media, source = local_clip
+    received = []
+
+    class AnnotatedVoice(FakeSynthesizer):
+        def synthesize_segments(self, segments, output_dir):
+            received.extend([
+                (segment.translated_text, [reading.model_dump() for reading in segment.pronunciations])
+                for segment in segments
+            ])
+            return super().synthesize_segments(segments, output_dir)
+
+    monkeypatch.setattr(runner, "SpeechSynthesizer", AnnotatedVoice)
+    store = JobStore(settings)
+    pipeline = VideoTranslationPipeline(settings, store)
+    prepared = pipeline.prepare(store.create(str(source), PipelineOptions()))
+    translations = Path(prepared.translations_path)
+    translations.write_text(json.dumps({"segments": [{
+        "id": 0,
+        "text": "  你得记住。  ",
+        "pronunciations": [{"start": 3, "char": "得", "pinyin": "dei3"}],
+    }]}), encoding="utf-8")
+    expected_annotations = [{"start": 1, "char": "得", "pinyin": "dei3"}]
+
+    for _ in range(2):
+        completed = pipeline.render(store.get(prepared.id))
+        assert_outputs(completed, media, chinese="你得记住。")
+        saved = json.loads(translations.read_text())["segments"][0]
+        assert saved == {"id": 0, "text": "你得记住。", "pronunciations": expected_annotations}
+    assert received == [("你得记住。", expected_annotations)] * 2
+
+
+def test_api_translation_run_is_rejected_before_download(tmp_path, monkeypatch):
+    from video_translator.errors import ConfigurationError
+
+    settings = Settings(data_dir=tmp_path / "data")
+    store = JobStore(settings)
+    pipeline = VideoTranslationPipeline(settings, store)
+    manifest = store.create("https://www.youtube.com/watch?v=example", PipelineOptions())
+
+    def unexpected_download(*args, **kwargs):
+        pytest.fail("Rejected API translation should not acquire source media")
+
+    monkeypatch.setattr(runner, "acquire_source", unexpected_download)
+    with pytest.raises(ConfigurationError, match="Codex Pro"):
+        pipeline.run(manifest)
+    assert store.get(manifest.id).status == JobStatus.failed
