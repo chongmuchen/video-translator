@@ -21,6 +21,8 @@
 | Jean Fraisse《动画与游戏项目插画》全课（18 节正课及结课项目） | [domestika-jean-fraisse](domestika-jean-fraisse/) | [全课 1080p 普通话配音视频](domestika-jean-fraisse/delivery/全课程_按顺序播放.m3u8) · [A4 中文讲稿](domestika-jean-fraisse/delivery/动画与游戏项目插画_A4_中文译稿.pdf) |
 | Hugo Bille《超级银河战士的无形之手》 | [super-metroid-invisible-hand](super-metroid-invisible-hand/) | [A3 横版中英对照 PDF](super-metroid-invisible-hand/delivery/超级银河战士的无形之手_A3横版_中英对照.pdf) · [A4 中文译稿 PDF](super-metroid-invisible-hand/delivery/超级银河战士的无形之手_A4竖版_中文译稿.pdf) |
 | 《能干的猎人》 · 格林童话的视觉开发 | [the-skillful-huntsman](the-skillful-huntsman/) | [A3 横版中英对照 PDF](the-skillful-huntsman/delivery/能干的猎人_A3横版_中英对照.pdf) |
+| 《精灵与萤火意志》 · 叙事设计与视觉叙事（GDC 2021） | [ori-will-of-the-wisps-narrative-gdc](ori-will-of-the-wisps-narrative-gdc/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-narrative-gdc/delivery/) · [B 站「美术」P1](https://www.bilibili.com/video/BV14eyGzCEbZ/?p=1) |
+| 《精灵与萤火意志》的美术设计（GDC 2021） | [ori-will-of-the-wisps-art-gdc](ori-will-of-the-wisps-art-gdc/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-art-gdc/delivery/) · [B 站「美术」P2](https://www.bilibili.com/video/BV14eyGzCEbZ/?p=2) |
 
 每个项目的 `delivery/` 存放交付文件。视频项目含最终 MP4 和双语字幕，系列项目还附有播放列表。`repair/` 存放翻译和修订所需的资料。`job/` 可另存原始媒体、原文和任务记录。
 
