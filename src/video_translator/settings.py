@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    data_dir: Path = PROJECT_ROOT / "data"
+    data_dir: Path = Field(default_factory=lambda: PROJECT_ROOT / ".runtime" / "cli")
     max_video_seconds: int = 7200
     max_download_height: int = 1080
     allowed_hosts: str = (
@@ -111,6 +111,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    settings = Settings()
-    settings.ensure_directories()
-    return settings
+    return Settings()

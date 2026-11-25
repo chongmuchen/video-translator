@@ -19,7 +19,7 @@
 .venv/bin/video-translator doctor
 ```
 
-安装脚本创建 `.venv`，安装识别、下载和测试依赖，以及项目本地的 Kokoro 中文模型和音色。在缺少系统 FFmpeg 时下载项目本地版本。可用 `PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh` 指定解释器。默认配置无需创建 `.env`，需要修改时可从 `.env.example` 复制。
+安装脚本创建 `.venv`，安装识别、下载和测试依赖，以及项目本地的 Kokoro 中文模型和音色。在缺少系统 FFmpeg 时下载项目本地版本。可用 `PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh` 指定解释器。默认配置无需创建 `.env`，需要修改时可从 `.env.example` 复制。任务目录在实际处理任务时创建。
 
 首次语音识别可能需要下载 Whisper 模型。默认使用 `large-v3`，初次冒烟可在命令前设置 `VT_ASR_MODEL=tiny`。
 
@@ -27,12 +27,12 @@
 
 ## Codex 操作流程
 
-以下两条命令由 Codex 运行。也可以用本地 MP4、MKV、MOV、WebM 或 M4V 路径作为输入。
+以下两条命令由 Codex 运行。将 `project-name` 换成 `data/projects/` 下的项目目录名，两步使用同一个项目名。也可以用本地 MP4、MKV、MOV、WebM 或 M4V 路径作为输入。
 
 ```bash
-.venv/bin/video-translator prepare 'https://www.youtube.com/watch?v=VIDEO_ID' --json
+.venv/bin/video-translator prepare 'https://www.youtube.com/watch?v=VIDEO_ID' --project project-name --json
 # Codex 按原文片段写完 translations.json，再用 prepare 返回的任务号继续。
-.venv/bin/video-translator render JOB_ID --json
+.venv/bin/video-translator render JOB_ID --project project-name --json
 ```
 
 1. `prepare` 获取视频并识别语音，返回 `status=prepared`、`job_id`、`detected_language`、`segments_path`、`translations_path` 和 `log_path`。原文语言默认自动识别，已知时可加 `--source-language en` 等语言代码。加 `--no-original-audio` 可以省略独立的原声音轨。
@@ -73,7 +73,9 @@ Kokoro 在本机把标记转换为音素，也就是模型使用的发音符号�
 
 ## 重试与验收
 
-`--json` 将任务结果写入标准输出，进度与诊断写入标准错误和任务日志。默认中间文件在 `data/jobs/<job_id>/`，CLI 渲染结果写入 `data/outputs/`。用任务返回的绝对路径定位文件。验收后，将选定版本和双语字幕归入对应项目的 `data/projects/<项目名>/delivery/`。
+`--json` 将任务结果写入标准输出，进度与诊断写入标准错误和任务日志。使用 `--project` 时，任务记录和中间文件写入 `data/projects/<项目名>/job/jobs/<job_id>/`，渲染预览写入同一项目的 `job/outputs/`。用任务返回的绝对路径定位文件。验收后，将选定版本和双语字幕归入对应项目的 `data/projects/<项目名>/delivery/`。
+
+独立试跑默认使用 `.runtime/cli/`，可设置 `VT_DATA_DIR` 指定其他目录。同时指定 `--project` 和 `VT_DATA_DIR` 时以项目为准。未指定项目且未设置 `VT_DATA_DIR` 的 `render`，会先查找默认目录中的任务，找不到时再尝试读取已有的 `data/jobs/<job_id>/manifest.json`。旧脚本可以显式设置 `VT_DATA_DIR=./data` 继续使用旧目录。归档恢复按各项目 README 重建所需的兼容链接。
 
 渲染失败时读取 `failed_stage`、`error` 和 `log_path`。若 `overflow_segments` 有数据，它会列出超时台词的片段编号、配音时长和时间槽长度。跨字幕片段的整句用 `cue_ids` 列出涉及的编号。缩短相应译文后，使用同一个任务 ID 再跑 `render`，会复用视频、转写和未改动的有效配音。每次成功渲染会把 MP4 和两份字幕一起写入新的版本目录，便于对照验收。旧任务若缺少原视频或转写文件，需要重新执行 `prepare`。
 
@@ -83,4 +85,4 @@ Kokoro 在本机把标记转换为音素，也就是模型使用的发音符号�
 .venv/bin/pytest
 ```
 
-旧 `translate` 服务调用入口已停用。历史配置仍可读取，运行时会提示使用上述 Codex 流程。`passthrough` 仅供离线管线测试。
+旧 `translate` 服务调用入口已停用。历史配置仍可读取，运行时会提示使用上述 Codex 流程。`passthrough` 仅供离线管线测试，可通过 `--project` 指定项目。

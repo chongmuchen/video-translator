@@ -14,8 +14,8 @@ from .models import JobManifest, PipelineOptions
 from .pipeline.kokoro import MODEL_DIR, check_runtime
 from .pipeline.runner import VideoTranslationPipeline
 from .runtime import resolve_media_binaries
-from .settings import Settings, get_settings
-from .store import JobStore
+from .settings import PROJECT_ROOT, Settings, get_settings
+from .store import JOB_ID_PATTERN, JobStore
 
 
 def _print_check(label: str, ok: bool, detail: str) -> None:
@@ -67,8 +67,7 @@ def doctor(settings: Settings, *, check_translator: bool = False) -> int:
     else:
         print("- 翻译             使用 ChatGPT 登录的 Codex Pro 写译稿，再运行 render")
 
-    settings.ensure_directories()
-    _print_check("数据目录", True, str(settings.data_dir))
+    print(f"- 数据目录         {settings.data_dir}")
     print()
     return 1 if failed else 0
 
@@ -137,6 +136,29 @@ def _print_job_result(
         else:
             print(f"转写稿：{manifest.segments_path}")
             print(f"译稿路径：{manifest.translations_path}")
+
+
+def _job_settings(args: argparse.Namespace, settings: Settings) -> Settings:
+    if args.project is not None:
+        name = args.project
+        if not name.strip() or name in {".", ".."} or any(char in name for char in "/\\\0"):
+            raise VideoTranslatorError("--project 必须是 data/projects 下的单个项目目录名。")
+        directory = PROJECT_ROOT / "data" / "projects" / name / "job"
+        settings = settings.model_copy(update={"data_dir": directory})
+
+    if args.command != "render":
+        return settings
+    if not JOB_ID_PATTERN.fullmatch(args.job_id):
+        raise VideoTranslatorError("任务 ID 无效。")
+
+    manifest = Path(args.job_id) / "manifest.json"
+    if (settings.jobs_dir / manifest).is_file():
+        return settings
+    if "data_dir" not in settings.model_fields_set:
+        legacy = settings.model_copy(update={"data_dir": PROJECT_ROOT / "data"})
+        if (legacy.jobs_dir / manifest).is_file():
+            return legacy
+    raise VideoTranslatorError(f"找不到任务 {args.job_id}。")
 
 
 def _job_command(args: argparse.Namespace, settings: Settings) -> int:
@@ -220,6 +242,11 @@ def build_parser() -> argparse.ArgumentParser:
         source_command.add_argument("--no-original-audio", action="store_true")
     for job_command in (prepare, render, translate):
         job_command.add_argument(
+            "--project",
+            metavar="NAME",
+            help="项目目录名，使用 data/projects/NAME/job 存放任务和渲染结果",
+        )
+        job_command.add_argument(
             "--json", action="store_true", help="将任务结果以 JSON 输出到 stdout"
         )
     translate.add_argument(
@@ -245,7 +272,7 @@ def main() -> None:
             print(f"ffmpeg:  {media.ffmpeg}")
             print(f"ffprobe: {media.ffprobe}")
             return
-        raise SystemExit(_job_command(args, settings))
+        raise SystemExit(_job_command(args, _job_settings(args, settings)))
     except (VideoTranslatorError, ValueError, OSError) as exc:
         if getattr(args, "json", False):
             result = {

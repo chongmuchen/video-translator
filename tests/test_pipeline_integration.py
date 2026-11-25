@@ -1,11 +1,14 @@
 import json
 import logging
 import struct
+import sys
 import wave
 from pathlib import Path
 
 import pytest
 
+from video_translator import cli
+from video_translator import settings as settings_module
 from video_translator.commands import run_command
 from video_translator.errors import PipelineError
 from video_translator.models import JobManifest, JobStatus, PipelineOptions, Segment
@@ -162,6 +165,60 @@ def test_end_to_end_runner_with_fake_model_adapters(
     completed = VideoTranslationPipeline(settings, store).run(manifest)
 
     assert_outputs(completed, media, chinese="你好，世界。")
+
+
+@pytest.mark.parametrize("scope", ["project", "standalone", "legacy"])
+def test_cli_runs_job_in_selected_directory(
+    local_clip: tuple[Settings, MediaBinaries, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scope: str,
+) -> None:
+    _, media, source = local_clip
+    root = source.parent
+    monkeypatch.setattr(cli, "PROJECT_ROOT", root)
+    monkeypatch.setattr(settings_module, "PROJECT_ROOT", root)
+    monkeypatch.delenv("VT_DATA_DIR", raising=False)
+    settings = Settings(_env_file=None, ffmpeg_bin=media.ffmpeg, ffprobe_bin=media.ffprobe)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    def run_cli(*args: str) -> dict:
+        monkeypatch.setattr(sys, "argv", ["video-translator", *args, "--json"])
+        with pytest.raises(SystemExit) as exit_status:
+            cli.main()
+        result = json.loads(capsys.readouterr().out)
+        assert exit_status.value.code == 0, result
+        return result
+
+    project = "test-project"
+    project_args = [] if scope == "standalone" else ["--project", project]
+    job_root = settings.data_dir if not project_args else root / "data/projects" / project / "job"
+    prepared = run_cli("prepare", str(source), *project_args)
+    job_id = prepared["job_id"]
+    translations = job_root / "jobs" / job_id / "translations.json"
+    assert Path(prepared["translations_path"]) == translations
+    translations.write_text(
+        json.dumps({"segments": [{"id": 0, "text": "你好，世界。"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    if scope == "legacy":
+        legacy_jobs = root / "data/jobs"
+        legacy_jobs.mkdir()
+        (legacy_jobs / job_id).symlink_to(translations.parent, target_is_directory=True)
+        rendered = run_cli("render", job_id)
+        output_dir = root / "data/outputs"
+    else:
+        rendered = run_cli("render", job_id, *project_args)
+        output_dir = job_root / "outputs"
+        assert not (root / "data/jobs").exists()
+        assert not (root / "data/outputs").exists()
+
+    assert Path(rendered["output_path"]).is_relative_to(output_dir / job_id)
+    manifest = JobManifest.model_validate_json(
+        translations.with_name("manifest.json").read_text(encoding="utf-8")
+    )
+    assert_outputs(manifest, media, chinese="你好，世界。")
 
 
 @pytest.mark.parametrize("source_language", ["en", "ja"])
