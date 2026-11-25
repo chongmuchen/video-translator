@@ -21,8 +21,15 @@
 | Jean Fraisse《动画与游戏项目插画》全课（18 节正课及结课项目） | [domestika-jean-fraisse](domestika-jean-fraisse/) | [全课 1080p 普通话配音视频](domestika-jean-fraisse/delivery/全课程_按顺序播放.m3u8) · [A4 中文讲稿](domestika-jean-fraisse/delivery/动画与游戏项目插画_A4_中文译稿.pdf) |
 | Hugo Bille《超级银河战士的无形之手》 | [super-metroid-invisible-hand](super-metroid-invisible-hand/) | [A3 横版中英对照 PDF](super-metroid-invisible-hand/delivery/超级银河战士的无形之手_A3横版_中英对照.pdf) · [A4 中文译稿 PDF](super-metroid-invisible-hand/delivery/超级银河战士的无形之手_A4竖版_中文译稿.pdf) |
 | 《能干的猎人》 · 格林童话的视觉开发 | [the-skillful-huntsman](the-skillful-huntsman/) | [A3 横版中英对照 PDF](the-skillful-huntsman/delivery/能干的猎人_A3横版_中英对照.pdf) |
-| 《精灵与萤火意志》 · 叙事设计与视觉叙事（GDC 2021） | [ori-will-of-the-wisps-narrative-gdc](ori-will-of-the-wisps-narrative-gdc/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-narrative-gdc/delivery/) · [B 站「美术」P1](https://www.bilibili.com/video/BV14eyGzCEbZ/?p=1) |
-| 《精灵与萤火意志》的美术设计（GDC 2021） | [ori-will-of-the-wisps-art-gdc](ori-will-of-the-wisps-art-gdc/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-art-gdc/delivery/) · [B 站「美术」P2](https://www.bilibili.com/video/BV14eyGzCEbZ/?p=2) |
+| 《精灵与萤火意志》 · 叙事设计与视觉叙事（GDC 2021） | [ori-will-of-the-wisps-narrative-gdc](ori-will-of-the-wisps-narrative-gdc/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-narrative-gdc/delivery/) · [B 站「游戏美术」P1](https://www.bilibili.com/video/BV14eyGzCEbZ/?p=1) |
+| 《精灵与萤火意志》的美术设计（GDC 2021） | [ori-will-of-the-wisps-art-gdc](ori-will-of-the-wisps-art-gdc/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-art-gdc/delivery/) · [B 站「游戏美术」P2](https://www.bilibili.com/video/BV14eyGzCEbZ/?p=2) |
+| 《精灵与萤火意志》的世界设计（Games Gathering 2021） | [ori-will-of-the-wisps-world-design-games-gathering](ori-will-of-the-wisps-world-design-games-gathering/) | [1080p 普通话配音成片和双语字幕](ori-will-of-the-wisps-world-design-games-gathering/delivery/) · [B 站「游戏设计教学」P7](https://www.bilibili.com/video/BV16Lsw6TEt2/?p=7) |
+| 《精灵与萤火意志》 · 狂风荒漠关卡设计（GMTK） | [ori-windswept-wastes-gmtk](ori-windswept-wastes-gmtk/README.md) | [1080p60 普通话配音成片和双语字幕](ori-windswept-wastes-gmtk/delivery/) |
+| 加雷思·科克的游戏配乐 · 两段录制短片、两场访谈与 BAFTA 大师课 | [gareth-coker-game-music](gareth-coker-game-music/README.md) | [五条成片和双语字幕 · 按原顺序播放](gareth-coker-game-music/delivery/按原顺序播放.m3u8) |
+| 《精灵与森林》的动画制作流程（GDC 2015） | [ori-blind-forest-animation-gdc](ori-blind-forest-animation-gdc/README.md) | [720p30 普通话配音成片和双语字幕](ori-blind-forest-animation-gdc/delivery/) |
+| 《精灵与萤火意志》 · 场景布置过程（Florian Herold，三段） | [ori-set-dressing-florian-herold](ori-set-dressing-florian-herold/README.md) | [1080p 双语字幕成片，按原顺序播放](ori-set-dressing-florian-herold/delivery/按原顺序播放.m3u8) |
+| 《精灵与森林》的声音制作 · 两场讲座、音效预告与访谈 | [ori-blind-forest-game-audio](ori-blind-forest-game-audio/README.md) | [四条成片与双语字幕，按原顺序播放](ori-blind-forest-game-audio/delivery/按原顺序播放.m3u8) |
+| 《奥日》系列 · 主机移植、发售活动与制作人试玩 | [ori-ports-and-blind-forest-development](ori-ports-and-blind-forest-development/README.md) | [四支 1080p 普通话配音成片与双语字幕，按原顺序播放](ori-ports-and-blind-forest-development/delivery/按原顺序播放.m3u8) |
 
 每个项目的 `delivery/` 存放交付文件。视频项目含最终 MP4 和双语字幕，系列项目还附有播放列表。`repair/` 存放翻译和修订所需的资料。`job/` 可另存原始媒体、原文和任务记录。
 

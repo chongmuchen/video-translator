@@ -14,5 +14,4 @@ data/projects/*
 !data/projects/README.md
 .runtime/
 separated/
-work/
 data/channel-assets
